@@ -1,5 +1,6 @@
 local Tree = require("neotest.types").Tree
 
+---@type neotest-al.Discovery
 local M = {}
 M.name = "treesitter"
 
