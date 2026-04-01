@@ -16,7 +16,7 @@ local function find_client(path)
     local norm = vim.fs.normalize(path)
     for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
         local root = vim.fs.normalize(client.root_dir or "")
-        if #root > 0 and norm:sub(1, #root) == root then
+        if #root > 0 and norm:sub(1, #root) == root and norm:sub(#root + 1, #root + 1) == "/" then
             return client
         end
     end
