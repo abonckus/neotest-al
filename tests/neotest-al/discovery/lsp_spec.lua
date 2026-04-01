@@ -107,7 +107,6 @@ describe("neotest-al.discovery.lsp", function()
 
     -- ── discover_positions ────────────────────────────────────────────────────
     describe("discover_positions", function()
-        local async = require("plenary.async")
         local fixture_path = vim.fn.fnamemodify("tests/fixtures/TestCodeunit.al", ":p")
         local fixture_uri  = vim.uri_from_fname(fixture_path)
 
@@ -116,7 +115,7 @@ describe("neotest-al.discovery.lsp", function()
                 id       = id,
                 root_dir = root,
                 request  = function(self, method, params, cb)
-                    cb(nil, response)
+                    vim.schedule(function() cb(nil, response) end)
                     return true, 1
                 end,
             }
@@ -148,36 +147,56 @@ describe("neotest-al.discovery.lsp", function()
             }
         end
 
-        it("returns nil when no al_ls client exists", async.void(function()
+        -- Helper: run an async function inside nio.run and wait for it
+        local function run_async(fn)
+            local nio = require("nio")
+            local result, err, completed = nil, nil, false
+            nio.run(function()
+                local ok, val = pcall(fn)
+                if ok then result = val else err = val end
+                completed = true
+            end)
+            vim.wait(5000, function() return completed end, 10)
+            if err then error(err, 2) end
+            return result
+        end
+
+        it("returns nil when no al_ls client exists", function()
             local orig = vim.lsp.get_clients
             vim.lsp.get_clients = function() return {} end
 
-            local result = lsp.discover_positions(fixture_path)
-            assert.is_nil(result)
+            local result = run_async(function()
+                return lsp.discover_positions(fixture_path)
+            end)
 
             vim.lsp.get_clients = orig
-        end))
+            assert.is_nil(result)
+        end)
 
-        it("returns nil when LSP has no tests for the file", async.void(function()
+        it("returns nil when LSP has no tests for the file", function()
             local root   = vim.fn.fnamemodify("tests/fixtures", ":p")
-            local client = make_mock_client(88, root, {})  -- empty app list
+            local client = make_mock_client(88, root, {})
             local orig   = vim.lsp.get_clients
             vim.lsp.get_clients = function() return { client } end
 
-            local result = lsp.discover_positions(fixture_path)
-            assert.is_nil(result)
+            local result = run_async(function()
+                return lsp.discover_positions(fixture_path)
+            end)
 
             vim.lsp.get_clients = orig
             lsp.invalidate(88)
-        end))
+            assert.is_nil(result)
+        end)
 
-        it("returns a Tree when LSP reports tests for the file", async.void(function()
+        it("returns a Tree when LSP reports tests for the file", function()
             local root   = vim.fn.fnamemodify("tests/fixtures", ":p")
             local client = make_mock_client(99, root, mock_response(fixture_uri))
             local orig   = vim.lsp.get_clients
             vim.lsp.get_clients = function() return { client } end
 
-            local tree = lsp.discover_positions(fixture_path)
+            local tree = run_async(function()
+                return lsp.discover_positions(fixture_path)
+            end)
 
             vim.lsp.get_clients = orig
             lsp.invalidate(99)
@@ -186,15 +205,17 @@ describe("neotest-al.discovery.lsp", function()
             local root_node = tree:data()
             assert.are.equal("file", root_node.type)
             assert.are.equal("My Test Codeunit", root_node.name)
-        end))
+        end)
 
-        it("builds one test child per LSP test item", async.void(function()
+        it("builds one test child per LSP test item", function()
             local root   = vim.fn.fnamemodify("tests/fixtures", ":p")
             local client = make_mock_client(100, root, mock_response(fixture_uri))
             local orig   = vim.lsp.get_clients
             vim.lsp.get_clients = function() return { client } end
 
-            local tree = lsp.discover_positions(fixture_path)
+            local tree = run_async(function()
+                return lsp.discover_positions(fixture_path)
+            end)
 
             vim.lsp.get_clients = orig
             lsp.invalidate(100)
@@ -205,9 +226,9 @@ describe("neotest-al.discovery.lsp", function()
             assert.are.equal("Test_WhenX_ShouldY", test_node.name)
             assert.are.equal(fixture_path .. "::" .. "Test_WhenX_ShouldY", test_node.id)
             assert.are.same({ 5, 14, 5, 28 }, test_node.range)
-        end))
+        end)
 
-        it("serves subsequent calls from cache without re-requesting", async.void(function()
+        it("serves subsequent calls from cache without re-requesting", function()
             local request_count = 0
             local root = vim.fn.fnamemodify("tests/fixtures", ":p")
             local client = {
@@ -215,23 +236,23 @@ describe("neotest-al.discovery.lsp", function()
                 root_dir = root,
                 request  = function(self, method, params, cb)
                     request_count = request_count + 1
-                    cb(nil, mock_response(fixture_uri))
+                    vim.schedule(function() cb(nil, mock_response(fixture_uri)) end)
                     return true, 1
                 end,
             }
             local orig = vim.lsp.get_clients
             vim.lsp.get_clients = function() return { client } end
 
-            lsp.discover_positions(fixture_path)
-            lsp.discover_positions(fixture_path)
+            run_async(function() lsp.discover_positions(fixture_path) end)
+            run_async(function() lsp.discover_positions(fixture_path) end)
 
             vim.lsp.get_clients = orig
             lsp.invalidate(101)
 
             assert.are.equal(1, request_count)
-        end))
+        end)
 
-        it("re-fetches after invalidate", async.void(function()
+        it("re-fetches after invalidate", function()
             local request_count = 0
             local root = vim.fn.fnamemodify("tests/fixtures", ":p")
             local client = {
@@ -239,21 +260,25 @@ describe("neotest-al.discovery.lsp", function()
                 root_dir = root,
                 request  = function(self, method, params, cb)
                     request_count = request_count + 1
-                    cb(nil, mock_response(fixture_uri))
+                    vim.schedule(function() cb(nil, mock_response(fixture_uri)) end)
                     return true, 1
                 end,
             }
             local orig = vim.lsp.get_clients
             vim.lsp.get_clients = function() return { client } end
 
-            lsp.discover_positions(fixture_path)
+            run_async(function() lsp.discover_positions(fixture_path) end)
             lsp.invalidate(102)
-            lsp.discover_positions(fixture_path)
+            run_async(function() lsp.discover_positions(fixture_path) end)
 
             vim.lsp.get_clients = orig
             lsp.invalidate(102)
 
             assert.are.equal(2, request_count)
-        end))
+        end)
+
+        after_each(function()
+            vim.lsp.handlers["al/projectsLoadedNotification"] = nil
+        end)
     end)
 end)

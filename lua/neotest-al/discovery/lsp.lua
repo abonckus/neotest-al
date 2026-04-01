@@ -84,24 +84,10 @@ end
 ---@param client vim.lsp.Client
 ---@return table<string, any>
 local function fetch_and_cache(client)
-    local err, result
-    if nio.tasks.current_task() then
-        -- Running inside a nio task (production path): yield until LSP responds
-        local request = nio.wrap(function(cb)
-            client:request("al/discoverTests", {}, cb)
-        end, 1)
-        err, result = request()
-    else
-        -- Running outside a nio task (test / synchronous-callback path)
-        local done = false
-        client:request("al/discoverTests", {}, function(e, r)
-            err, result = e, r
-            done = true
-        end)
-        if not done then
-            vim.wait(5000, function() return done end, 10)
-        end
-    end
+    local request = nio.wrap(function(cb)
+        client:request("al/discoverTests", {}, cb)
+    end, 1)
+    local err, result = request()
     if err then
         vim.notify(
             "neotest-al: al/discoverTests failed: " .. vim.inspect(err),
