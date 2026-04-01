@@ -1,0 +1,7 @@
+describe("smoke", function()
+    it("loads neotest-al without error", function()
+        assert.has_no.errors(function()
+            require("neotest-al")
+        end)
+    end)
+end)
