@@ -1,0 +1,4 @@
+---@class neotest-al.Runner
+---@field name string
+---@field build_spec fun(args: neotest.RunArgs, discovery: neotest-al.Discovery): neotest.RunSpec|nil
+---@field results   fun(spec: neotest.RunSpec, result: neotest.StrategyResult, tree: neotest.Tree): table<string, neotest.Result>

@@ -1,0 +1,4 @@
+---@class neotest-al.Discovery
+---@field name string                                                          -- display name, e.g. "lsp", "treesitter"
+---@field discover_positions fun(path: string): neotest.Tree|nil              -- async (runs in nio coroutine)
+---@field invalidate fun(client_id?: integer): nil                            -- nil clears all workspaces

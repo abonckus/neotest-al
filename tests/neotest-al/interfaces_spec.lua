@@ -1,0 +1,13 @@
+describe("interfaces", function()
+    it("discovery typedef module loads without error", function()
+        assert.has_no.errors(function()
+            require("neotest-al.discovery")
+        end)
+    end)
+
+    it("runner typedef module loads without error", function()
+        assert.has_no.errors(function()
+            require("neotest-al.runner")
+        end)
+    end)
+end)
