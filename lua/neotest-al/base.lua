@@ -20,7 +20,6 @@ function M.is_test_file(file_path)
 end
 
 function M.position_id(position, parents)
-    print("Generating position ID for " .. position.name)
     local original_id = position.path
     local has_parent_class = false
     local sep = "::"
