@@ -101,4 +101,24 @@ describe("neotest-al.adapter", function()
 
         assert.are.equal(discovery, received_discovery)
     end)
+
+    it("delegates results to runner.results", function()
+        local received = {}
+        local runner = stub_runner({
+            results = function(spec, result, tree)
+                received.spec   = spec
+                received.result = result
+                received.tree   = tree
+                return { ["path::test"] = { status = "passed" } }
+            end,
+        })
+
+        local adapter = create_adapter({ discovery = stub_discovery(), runner = runner })
+        local out = adapter.results("spec_val", "result_val", "tree_val")
+
+        assert.are.equal("spec_val",    received.spec)
+        assert.are.equal("result_val",  received.result)
+        assert.are.equal("tree_val",    received.tree)
+        assert.are.same({ ["path::test"] = { status = "passed" } }, out)
+    end)
 end)
