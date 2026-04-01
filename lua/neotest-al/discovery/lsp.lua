@@ -79,17 +79,83 @@ local function ensure_notification_handler()
     end
 end
 
--- ── discover_positions (stub — fetch not yet implemented) ─────────────────────
+-- ── Fetch from LSP ────────────────────────────────────────────────────────────
+
+---@param client vim.lsp.Client
+---@return table<string, any>
+local function fetch_and_cache(client)
+    local err, result
+    if nio.tasks.current_task() then
+        -- Running inside a nio task (production path): yield until LSP responds
+        local request = nio.wrap(function(cb)
+            client:request("al/discoverTests", {}, cb)
+        end, 1)
+        err, result = request()
+    else
+        -- Running outside a nio task (test / synchronous-callback path)
+        local done = false
+        client:request("al/discoverTests", {}, function(e, r)
+            err, result = e, r
+            done = true
+        end)
+        if not done then
+            vim.wait(5000, function() return done end, 10)
+        end
+    end
+    if err then
+        vim.notify(
+            "neotest-al: al/discoverTests failed: " .. vim.inspect(err),
+            vim.log.levels.ERROR
+        )
+        return {}
+    end
+    return index_by_file(result)
+end
+
+-- ── discover_positions ────────────────────────────────────────────────────────
 
 ---@async
 ---@param path string
 ---@return neotest.Tree|nil
 function M.discover_positions(path)
     ensure_notification_handler()
+
     local client = find_client(path)
     if not client then return nil end
-    -- fetch + Tree building added in Task 5
-    return nil
+
+    if not cache[client.id] then
+        cache[client.id] = fetch_and_cache(client)
+    end
+
+    local norm      = vim.fs.normalize(path)
+    local file_data = cache[client.id][norm]
+    if not file_data or #file_data.tests == 0 then
+        return nil
+    end
+
+    local lines = vim.fn.readfile(path)
+    local pos_list = {
+        {
+            type  = "file",
+            path  = path,
+            name  = file_data.codeunit_name,
+            id    = path,
+            range = { 0, 0, #lines - 1, 0 },
+        },
+    }
+
+    for _, test in ipairs(file_data.tests) do
+        local r = test.location.range
+        table.insert(pos_list, {
+            type  = "test",
+            path  = path,
+            name  = test.name,
+            id    = path .. "::" .. test.name,
+            range = { r.start.line, r.start.character, r["end"].line, r["end"].character },
+        })
+    end
+
+    return Tree.from_list(pos_list, function(pos) return pos.id end)
 end
 
 -- ── Test-only exports ─────────────────────────────────────────────────────────
