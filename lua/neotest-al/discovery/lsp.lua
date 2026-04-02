@@ -18,20 +18,49 @@ local patched_clients = {}
 -- ── Client patching ──────────────────────────────────────────────────────────
 --
 -- The AL Language Server sends JSON-RPC responses with `"error": null` alongside
--- a valid `result`. In Lua, `vim.NIL` (how null is decoded) is truthy, so
--- Neovim's assertion `assert(type(decoded.error) == 'table')` in rpc.lua fires,
--- the response callback is never called, and our nio coroutine hangs forever.
+-- a valid `result`. In Lua, `vim.NIL` (how null is decoded) is truthy but not a
+-- table, so Neovim's assertion `assert(type(decoded.error) == 'table')` in
+-- rpc.lua:452 fires, the response callback is never called, and our nio coroutine
+-- hangs forever.
 --
--- Fix: shadow `handle_body` on the client instance to strip `"error": null`
--- before Neovim processes the body.
+-- Fix: shadow `handle_body` on the vim.lsp.rpc.Client instance (the low-level
+-- RPC client, NOT the vim.lsp.Client returned by vim.lsp.get_clients) to strip
+-- `"error": null` before Neovim processes the body.
+--
+-- vim.lsp.Client.rpc is a PublicClient whose .request closure captures the
+-- vim.lsp.rpc.Client as upvalue "client". We retrieve it with debug.getupvalue.
 
----@param client vim.lsp.Client
-local function ensure_client_patched(client)
-    if patched_clients[client.id] then return end
-    patched_clients[client.id] = true
+---@param lsp_client vim.lsp.Client
+---@return table|nil  the vim.lsp.rpc.Client, or nil if not reachable
+local function get_rpc_client(lsp_client)
+    local fn = lsp_client.rpc and lsp_client.rpc.request
+    if type(fn) ~= "function" then return nil end
+    for i = 1, 30 do
+        local name, val = debug.getupvalue(fn, i)
+        if not name then break end
+        if name == "client" then return val end
+    end
+end
 
-    local orig = client.handle_body
-    function client:handle_body(body)
+---@param lsp_client vim.lsp.Client
+local function ensure_client_patched(lsp_client)
+    if patched_clients[lsp_client.id] then return end
+    patched_clients[lsp_client.id] = true
+
+    local rpc_client = get_rpc_client(lsp_client)
+    if not rpc_client then
+        vim.notify(
+            "neotest-al: could not reach rpc.Client to patch handle_body",
+            vim.log.levels.WARN
+        )
+        return
+    end
+
+    -- Capture the original method from the class (via metatable lookup) before
+    -- we shadow it on the instance.
+    local orig = rpc_client.handle_body
+    function rpc_client:handle_body(body)
+        -- Strip "error": null so Neovim's type-check assertion doesn't fire.
         local ok, decoded = pcall(vim.json.decode, body, { luanil = { object = true, array = true } })
         if ok and type(decoded) == "table" and decoded.error == vim.NIL then
             decoded.error = nil
