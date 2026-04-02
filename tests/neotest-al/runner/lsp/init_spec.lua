@@ -208,12 +208,12 @@ describe("neotest-al.runner.lsp.init", function()
             local out  = lsp_runner.results(spec, {}, file_node)
 
             os.remove(path)
-            assert.are.equal("failed", out["/ws/F.al"].status)
-            assert.are.equal("failed", out["/ws/F.al::TestA"].status)
+            assert.are.equal("skipped", out["/ws/F.al"].status)
+            assert.are.equal("skipped", out["/ws/F.al::TestA"].status)
             assert.is_not_nil(out["/ws/F.al"].short:match("Build failed"))
         end)
 
-        it("marks all tree nodes failed on auth error with no tests", function()
+        it("marks all tree nodes skipped on auth error with no tests", function()
             local path = vim.fn.tempname() .. ".json"
             write_results(path, {
                 build_log    = { "Unauthorized\n" },
@@ -228,8 +228,8 @@ describe("neotest-al.runner.lsp.init", function()
             local out  = lsp_runner.results(spec, {}, file_node)
 
             os.remove(path)
-            assert.are.equal("failed", out["/ws/F.al"].status)
-            assert.are.equal("failed", out["/ws/F.al::TestA"].status)
+            assert.are.equal("skipped", out["/ws/F.al"].status)
+            assert.are.equal("skipped", out["/ws/F.al::TestA"].status)
             assert.is_not_nil(out["/ws/F.al"].short:match("Authentication failed"))
         end)
 

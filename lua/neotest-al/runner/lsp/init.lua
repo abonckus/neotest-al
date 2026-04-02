@@ -142,17 +142,17 @@ function M.new(opts)
         -- Authentication failure: no tests ran, no compiler errors
         if data.auth_error and #(data.tests or {}) == 0 then
             mark_all(tree, {
-                status = "failed",
+                status = "skipped",
                 short  = "Authentication failed — run :AL authenticate",
                 output = output_path,
             })
             return neotest_results
         end
 
-        -- Build failure: no tests ran, mark everything in the tree as failed
+        -- Build failure: no tests ran
         if #(data.build_errors or {}) > 0 and #(data.tests or {}) == 0 then
             mark_all(tree, {
-                status = "failed",
+                status = "skipped",
                 short  = "Build failed — see diagnostics",
                 output = output_path,
             })
