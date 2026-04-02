@@ -316,14 +316,19 @@ function M.discover_positions(path)
         return nil
     end
 
-    local lines = vim.fn.readfile(path)
+    -- Use the last test's end line for the file range.
+    -- Avoids a blocking vim.fn.readfile call (which can stall the UI on Windows
+    -- when the file is temporarily locked by AV or the AL Language Server).
+    local last_test_range = file_data.tests[#file_data.tests].location.range
+    local file_end_line   = last_test_range["end"].line
+
     local pos_list = {
         {
             type  = "file",
             path  = path,
             name  = file_data.codeunit_name,
             id    = path,
-            range = { 0, 0, #lines - 1, 0 },
+            range = { 0, 0, file_end_line, 0 },
         },
     }
 

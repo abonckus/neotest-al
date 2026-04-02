@@ -111,7 +111,7 @@ function M.new(opts)
         -- Collect raw LSP test items + build the id_map
         local test_items, id_map = collect_items(args.tree, discovery)
         if #test_items == 0 then
-            vim.notify("neotest-al: no test items found to run", vim.log.levels.WARN)
+            vim.notify("neotest-al: no test items found to run")
             return nil
         end
 
