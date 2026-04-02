@@ -213,6 +213,26 @@ describe("neotest-al.runner.lsp.init", function()
             assert.is_not_nil(out["/ws/F.al"].short:match("Build failed"))
         end)
 
+        it("marks all tree nodes failed on auth error with no tests", function()
+            local path = vim.fn.tempname() .. ".json"
+            write_results(path, {
+                build_log    = { "Unauthorized\n" },
+                build_errors = {},
+                tests        = {},
+                auth_error   = true,
+            })
+
+            local test_node = make_tree("test", "/ws/F.al", "TestA", "/ws/F.al::TestA")
+            local file_node = make_tree("file", "/ws/F.al", "My Codeunit", "/ws/F.al", { test_node })
+            local spec = { context = { results_path = path, id_map = {} } }
+            local out  = lsp_runner.results(spec, {}, file_node)
+
+            os.remove(path)
+            assert.are.equal("failed", out["/ws/F.al"].status)
+            assert.are.equal("failed", out["/ws/F.al::TestA"].status)
+            assert.is_not_nil(out["/ws/F.al"].short:match("Authentication failed"))
+        end)
+
         it("returns empty table when results file is missing", function()
             local spec = { context = { results_path = "/nonexistent.json", id_map = {} } }
             local out  = lsp_runner.results(spec, {}, make_tree("file", "/ws/F.al", "x", "/ws/F.al"))

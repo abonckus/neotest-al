@@ -127,6 +127,7 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
         build_log    = state.build_log,
         build_errors = state.build_errors,
         tests        = state.tests,
+        auth_error   = state.auth_error,
     })
     if ok then
         local f = io.open(results_path, "w")

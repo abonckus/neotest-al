@@ -131,20 +131,31 @@ function M.new(opts)
         local id_map  = spec.context.id_map or {}
         local neotest_results = {}
 
+        -- Helper: mark every node in the tree with the same result
+        local function mark_all(node, result)
+            neotest_results[node:data().id] = result
+            for _, child in ipairs(node:children() or {}) do
+                mark_all(child, result)
+            end
+        end
+
+        -- Authentication failure: no tests ran, no compiler errors
+        if data.auth_error and #(data.tests or {}) == 0 then
+            mark_all(tree, {
+                status = "failed",
+                short  = "Authentication failed — run :AL authenticate",
+                output = output_path,
+            })
+            return neotest_results
+        end
+
         -- Build failure: no tests ran, mark everything in the tree as failed
         if #(data.build_errors or {}) > 0 and #(data.tests or {}) == 0 then
-            local function mark_failed(node)
-                local d = node:data()
-                neotest_results[d.id] = {
-                    status = "failed",
-                    short  = "Build failed — see diagnostics",
-                    output = output_path,
-                }
-                for _, child in ipairs(node:children() or {}) do
-                    mark_failed(child)
-                end
-            end
-            mark_failed(tree)
+            mark_all(tree, {
+                status = "failed",
+                short  = "Build failed — see diagnostics",
+                output = output_path,
+            })
             return neotest_results
         end
 
