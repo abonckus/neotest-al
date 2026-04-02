@@ -67,7 +67,7 @@ describe("neotest-al.runner.lsp.run", function()
             local nio = require("nio")
             local done = false
             nio.run(function()
-                run.execute(client, {}, {}, results_path)
+                run.execute(client, {}, {}, results_path, false)
                 done = true
             end)
 
@@ -106,7 +106,7 @@ describe("neotest-al.runner.lsp.run", function()
             local nio = require("nio")
             local done = false
             nio.run(function()
-                run.execute(client, {}, {}, results_path)
+                run.execute(client, {}, {}, results_path, false)
                 done = true
             end)
             nio.sleep(50)
@@ -136,7 +136,7 @@ describe("neotest-al.runner.lsp.run", function()
             local nio = require("nio")
             local done = false
             nio.run(function()
-                run.execute(client, {}, {}, results_path)
+                run.execute(client, {}, {}, results_path, false)
                 done = true
             end)
             nio.sleep(50)
@@ -158,7 +158,7 @@ describe("neotest-al.runner.lsp.run", function()
             local nio = require("nio")
             local done = false
             nio.run(function()
-                run.execute(client, {}, {}, results_path)
+                run.execute(client, {}, {}, results_path, false)
                 done = true
             end)
             nio.sleep(50)
@@ -185,7 +185,7 @@ describe("neotest-al.runner.lsp.run", function()
             local nio = require("nio")
             local done = false
             nio.run(function()
-                success = run.execute(client, {}, {}, results_path)
+                success = run.execute(client, {}, {}, results_path, false)
                 done = true
             end)
             nio.sleep(50)
@@ -206,7 +206,7 @@ describe("neotest-al.runner.lsp.run", function()
             local nio = require("nio")
             local done = false
             nio.run(function()
-                success = run.execute(client, {}, {}, results_path)
+                success = run.execute(client, {}, {}, results_path, false)
                 done = true
             end)
             nio.sleep(50)

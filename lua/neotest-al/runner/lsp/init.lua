@@ -1,4 +1,5 @@
 local launch      = require("neotest-al.runner.lsp.launch")
+local dirty       = require("neotest-al.runner.lsp.dirty")
 local run         = require("neotest-al.runner.lsp.run")
 local diagnostics = require("neotest-al.runner.lsp.diagnostics")
 
@@ -79,9 +80,18 @@ function M.new(opts)
         local config = launch.get_config(position.path, { launch_json_path = opts.launch_json_path })
         if not config then return nil end
 
+        -- Determine SkipPublish from dirty state
+        local workspace_root = vim.fs.normalize(client.root_dir or "")
+        local skip_publish   = not dirty.is_dirty(workspace_root)
+
         -- Execute tests (blocks until al/testRunComplete or timeout)
         local results_path = vim.fn.tempname() .. ".json"
-        run.execute(client, config, test_items, results_path, opts.vscode_extension_version)
+        local success = run.execute(client, config, test_items, results_path, skip_publish, opts.vscode_extension_version)
+
+        -- Update dirty state
+        if success and not skip_publish then
+            dirty.mark_clean(workspace_root)
+        end
 
         return {
             command = { vim.v.progpath, "--version" },
