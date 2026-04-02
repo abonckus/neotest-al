@@ -115,7 +115,10 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
 
     active_runs[client.id] = nil
 
-    if state.auth_error then
+    -- Only notify about auth failure when no tests ran at all.
+    -- If tests did run, auth-related strings in the build log are likely
+    -- false positives (e.g. BC internal logging or test code testing auth).
+    if state.auth_error and #state.tests == 0 then
         vim.notify(
             "neotest-al: AL authentication failed — run :AL authenticate",
             vim.log.levels.ERROR
