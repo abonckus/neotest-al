@@ -270,4 +270,24 @@ end
 M._find_client   = find_client
 M._index_by_file = index_by_file
 
+--- Returns the cached test entry for a file path, or nil if not in cache.
+--- Used by the LSP runner to get raw LSP test items for al/runTests.
+---@param path string  normalized filesystem path
+---@return { codeunit_name: string, codeunit_id: integer, tests: table[] }|nil
+function M.get_items(path)
+    local norm = vim.fs.normalize(path)
+    for _, file_cache in pairs(cache) do
+        if file_cache[norm] then
+            return file_cache[norm]
+        end
+    end
+end
+
+--- Returns the al_ls client responsible for the given path, or nil.
+---@param path string
+---@return vim.lsp.Client|nil
+function M.get_client(path)
+    return find_client(path)
+end
+
 return M

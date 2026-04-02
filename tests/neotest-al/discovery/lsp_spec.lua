@@ -281,4 +281,75 @@ describe("neotest-al.discovery.lsp", function()
             vim.lsp.handlers["al/projectsLoadedNotification"] = nil
         end)
     end)
+
+    -- ── get_items ─────────────────────────────────────────────────────────────
+    describe("get_items", function()
+        it("returns nil when path is not in cache", function()
+            lsp.invalidate()
+            assert.is_nil(lsp.get_items("/workspace/File.al"))
+        end)
+
+        it("returns cached entry with correct shape", function()
+            local uri   = "file:///workspace/File.al"
+            local fpath = vim.fs.normalize(vim.uri_to_fname(uri))
+
+            -- Seed the cache by calling _index_by_file via the al/updateTests handler
+            local ctx = { client_id = 200 }
+            vim.lsp.handlers["al/updateTests"](nil, {
+                testItems = {
+                    {
+                        name     = "Test App",
+                        children = {
+                            {
+                                name       = "My Codeunit",
+                                codeunitId = 50200,
+                                children   = {
+                                    {
+                                        name     = "Test_Foo",
+                                        appId    = "abc-123",
+                                        codeunitId = 50200,
+                                        scope    = 2,
+                                        location = {
+                                            source = uri,
+                                            range  = {
+                                                start  = { line = 1, character = 0 },
+                                                ["end"] = { line = 1, character = 8 },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }, ctx, nil)
+
+            local entry = lsp.get_items(fpath)
+            assert.is_not_nil(entry)
+            assert.are.equal("My Codeunit", entry.codeunit_name)
+            assert.are.equal(50200, entry.codeunit_id)
+            assert.are.equal(1, #entry.tests)
+            assert.are.equal("Test_Foo", entry.tests[1].name)
+
+            lsp.invalidate(200)
+        end)
+    end)
+
+    -- ── get_client ────────────────────────────────────────────────────────────
+    describe("get_client", function()
+        it("returns nil when no al_ls clients exist", function()
+            local orig = vim.lsp.get_clients
+            vim.lsp.get_clients = function() return {} end
+            assert.is_nil(lsp.get_client("/workspace/File.al"))
+            vim.lsp.get_clients = orig
+        end)
+
+        it("returns client whose root_dir is a prefix of the path", function()
+            local mock = { id = 1, root_dir = "/workspace", name = "al_ls" }
+            local orig = vim.lsp.get_clients
+            vim.lsp.get_clients = function() return { mock } end
+            assert.are.equal(mock, lsp.get_client("/workspace/Src/File.al"))
+            vim.lsp.get_clients = orig
+        end)
+    end)
 end)
