@@ -12,8 +12,9 @@ local cache = {}
 -- Prevents N concurrent discover_positions calls from each sending a separate request.
 local fetch_in_progress = {}
 
--- patched_clients[client_id] = true once the client's handle_body has been patched.
-local patched_clients = {}
+-- true once vim.lsp.rpc.Client.handle_body has been patched at the class level.
+-- Patching the class fixes all instances (existing and future), so one patch is enough.
+local _class_patched = false
 
 -- ── Client patching ──────────────────────────────────────────────────────────
 --
@@ -31,8 +32,10 @@ local patched_clients = {}
 -- vim.lsp.rpc.Client as upvalue "client". We retrieve it with debug.getupvalue.
 
 ---@param lsp_client vim.lsp.Client
----@return table|nil  the vim.lsp.rpc.Client, or nil if not reachable
+---@return table|nil  the vim.lsp.rpc.Client instance, or nil if not reachable
 local function get_rpc_client(lsp_client)
+    -- vim.lsp.Client.rpc is a public_client table whose .request closure captures
+    -- the vim.lsp.rpc.Client instance as upvalue "client".
     local fn = lsp_client.rpc and lsp_client.rpc.request
     if type(fn) ~= "function" then return nil end
     for i = 1, 30 do
@@ -42,26 +45,33 @@ local function get_rpc_client(lsp_client)
     end
 end
 
+---Patch vim.lsp.rpc.Client.handle_body at the class level so that the
+---AL server's `"error": null` responses don't trigger the assertion at
+---rpc.lua:452. Patching the class fixes all instances (present and future).
+---
 ---@param lsp_client vim.lsp.Client
 local function ensure_client_patched(lsp_client)
-    if patched_clients[lsp_client.id] then return end
-    patched_clients[lsp_client.id] = true
+    if _class_patched then return end
 
     local rpc_client = get_rpc_client(lsp_client)
-    if not rpc_client then
-        vim.notify(
-            "neotest-al: could not reach rpc.Client to patch handle_body",
-            vim.log.levels.WARN
-        )
-        return
-    end
+    if not rpc_client then return end
 
-    -- Capture the original method from the class (via metatable lookup) before
-    -- we shadow it on the instance.
-    local orig = rpc_client.handle_body
-    function rpc_client:handle_body(body)
-        -- Strip "error": null so Neovim's type-check assertion doesn't fire.
-        local ok, decoded = pcall(vim.json.decode, body, { luanil = { object = true, array = true } })
+    local mt = getmetatable(rpc_client)
+    if not mt or type(mt.__index) ~= "table" then return end
+
+    local Client_class = mt.__index
+    if type(Client_class.handle_body) ~= "function" then return end
+
+    local orig = Client_class.handle_body
+    _class_patched = true
+
+    function Client_class:handle_body(body)
+        -- AL server sends {"error": null, "result": [...]}.
+        -- vim.NIL (JSON null) is truthy but not a table, causing
+        -- assert(type(decoded.error) == 'table') at rpc.lua:452 to fire,
+        -- which prevents the response callback from ever being called.
+        -- Normalize null → absent so Neovim handles the response normally.
+        local ok, decoded = pcall(vim.json.decode, body, { luanil = { object = true } })
         if ok and type(decoded) == "table" and decoded.error == vim.NIL then
             decoded.error = nil
             body = vim.json.encode(decoded)
