@@ -234,10 +234,27 @@ local function setup_notification_handlers()
         if prev_update then prev_update(err, result, ctx, config) end
     end
 
-    -- al/projectsLoadedNotification: invalidate so next call re-fetches
+    -- al/projectsLoadedNotification: invalidate cache, then immediately fire
+    -- al/discoverTests — this is the reactive call VSCode makes on every notification.
+    -- The response is a plain array (not wrapped in testItems like al/updateTests).
+    -- Only store it if non-empty; an empty response means the server isn't ready yet
+    -- and al/updateTests will arrive on its own.
     local prev_loaded = vim.lsp.handlers["al/projectsLoadedNotification"]
     vim.lsp.handlers["al/projectsLoadedNotification"] = function(err, result, ctx, config)
-        M.invalidate(ctx.client_id)
+        local client_id = ctx.client_id
+        M.invalidate(client_id)
+        local client = vim.lsp.get_client_by_id(client_id)
+        if client then
+            client:request("al/discoverTests", {}, function(req_err, response)
+                if not req_err and type(response) == "table" and #response > 0 then
+                    vim.schedule(function()
+                        raw_tree[client_id]          = response
+                        cache[client_id]             = nil
+                        fetch_in_progress[client_id] = nil
+                    end)
+                end
+            end)
+        end
         if prev_loaded then prev_loaded(err, result, ctx, config) end
     end
 end

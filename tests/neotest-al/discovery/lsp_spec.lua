@@ -300,6 +300,93 @@ describe("neotest-al.discovery.lsp", function()
             assert.are.equal(2, request_count)
         end)
 
+        it("fires al/discoverTests immediately on al/projectsLoadedNotification", function()
+            local requests_fired = {}
+            local mock_client = {
+                id       = 510,
+                root_dir = "/workspace",
+                request  = function(self, method, params, cb)
+                    table.insert(requests_fired, method)
+                    vim.schedule(function() cb(nil, {}) end)
+                    return true, 1
+                end,
+            }
+            local orig_by_id = vim.lsp.get_client_by_id
+            vim.lsp.get_client_by_id = function(id)
+                if id == 510 then return mock_client end
+            end
+
+            local handler = vim.lsp.handlers["al/projectsLoadedNotification"]
+            assert.is_not_nil(handler, "handler must be registered")
+            handler(nil, { projects = {} }, { client_id = 510 }, nil)
+
+            vim.wait(1000, function() return #requests_fired > 0 end, 10)
+
+            vim.lsp.get_client_by_id = orig_by_id
+            lsp.invalidate(510)
+
+            assert.is_true(vim.tbl_contains(requests_fired, "al/discoverTests"),
+                "expected al/discoverTests to be fired")
+        end)
+
+        it("populates raw_tree from al/discoverTests response on al/projectsLoadedNotification", function()
+            local uri = "file:///workspace/ReactiveTest.al"
+            local response = {
+                {
+                    name     = "Reactive App",
+                    children = {
+                        {
+                            name       = "Reactive CU",
+                            codeunitId = 600,
+                            children   = {
+                                {
+                                    name     = "ReactiveTest_ShouldWork",
+                                    location = {
+                                        source  = uri,
+                                        range   = {
+                                            start   = { line = 3, character = 4 },
+                                            ["end"] = { line = 3, character = 28 },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+
+            local mock_client = {
+                id       = 511,
+                root_dir = "/workspace",
+                request  = function(self, method, params, cb)
+                    if method == "al/discoverTests" then
+                        vim.schedule(function() cb(nil, response) end)
+                    end
+                    return true, 1
+                end,
+            }
+            local orig_by_id = vim.lsp.get_client_by_id
+            vim.lsp.get_client_by_id = function(id)
+                if id == 511 then return mock_client end
+            end
+
+            local handler = vim.lsp.handlers["al/projectsLoadedNotification"]
+            handler(nil, { projects = {} }, { client_id = 511 }, nil)
+
+            local fpath = lsp._norm(vim.uri_to_fname(uri))
+            vim.wait(1000, function() return lsp.get_items(fpath) ~= nil end, 10)
+
+            vim.lsp.get_client_by_id = orig_by_id
+            local entry = lsp.get_items(fpath)
+            lsp.invalidate(511)
+
+            assert.is_not_nil(entry, "expected get_items to return data from reactive discoverTests")
+            assert.are.equal("Reactive CU", entry.codeunit_name)
+            assert.are.equal(600, entry.codeunit_id)
+            assert.are.equal(1, #entry.tests)
+            assert.are.equal("ReactiveTest_ShouldWork", entry.tests[1].name)
+        end)
+
         after_each(function()
             vim.lsp.handlers["al/projectsLoadedNotification"] = nil
         end)
