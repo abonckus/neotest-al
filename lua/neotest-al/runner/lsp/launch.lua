@@ -46,8 +46,7 @@ end
 -- Get the AL launch configuration for the workspace containing file_path.
 -- Reads .vscode/launch.json (or opts.launch_json_path), filters type=="al",
 -- prompts with vim.ui.select when multiple configs exist, caches the result.
---
--- @async — must be called inside a nio coroutine.
+---@async
 ---@param file_path string
 ---@param opts? { launch_json_path?: string }
 ---@return table|nil  selected launch configuration, or nil on error/cancel
@@ -115,15 +114,15 @@ function M.get_config(file_path, opts)
 
     -- Multiple configs: prompt user via vim.ui.select (async)
     local select = nio.wrap(vim.ui.select, 3)
-    local choice, idx = select(al_configs, {
+    local choice = select(al_configs, {
         prompt      = "Select AL launch configuration:",
         format_item = function(cfg) return cfg.name or "(unnamed)" end,
     })
 
-    if not idx then return nil end
+    if not choice then return nil end
 
-    config_cache[root] = al_configs[idx]
-    return al_configs[idx]
+    config_cache[root] = choice
+    return choice
 end
 
 -- Test-only exports
