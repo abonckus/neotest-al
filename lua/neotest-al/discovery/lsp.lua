@@ -13,29 +13,24 @@ local cache = {}
 local fetch_in_progress = {}
 
 -- true once vim.lsp.rpc.Client.handle_body has been patched at the class level.
--- Patching the class fixes all instances (existing and future), so one patch is enough.
 local _class_patched = false
 
 -- ── Client patching ──────────────────────────────────────────────────────────
 --
 -- The AL Language Server sends JSON-RPC responses with `"error": null` alongside
--- a valid `result`. In Lua, `vim.NIL` (how null is decoded) is truthy but not a
--- table, so Neovim's assertion `assert(type(decoded.error) == 'table')` in
--- rpc.lua:452 fires, the response callback is never called, and our nio coroutine
--- hangs forever.
+-- a valid `result`. In Neovim's rpc.lua, `if decoded.error then` is truthy for
+-- vim.NIL (how JSON null decodes), but `type(vim.NIL) ~= 'table'` triggers
+-- `assert(type(decoded.error) == 'table')` at line 452, the callback is never
+-- called, and our nio coroutine hangs.
 --
--- Fix: shadow `handle_body` on the vim.lsp.rpc.Client instance (the low-level
--- RPC client, NOT the vim.lsp.Client returned by vim.lsp.get_clients) to strip
--- `"error": null` before Neovim processes the body.
---
--- vim.lsp.Client.rpc is a PublicClient whose .request closure captures the
--- vim.lsp.rpc.Client as upvalue "client". We retrieve it with debug.getupvalue.
+-- Fix: patch vim.lsp.rpc.Client.handle_body at the class level (via the
+-- metatable) to normalize any truthy non-table error value to nil before
+-- Neovim processes it. Applied eagerly at module load and via LspAttach so
+-- the fix is in place before the first AL server response arrives.
 
 ---@param lsp_client vim.lsp.Client
----@return table|nil  the vim.lsp.rpc.Client instance, or nil if not reachable
+---@return table|nil
 local function get_rpc_client(lsp_client)
-    -- vim.lsp.Client.rpc is a public_client table whose .request closure captures
-    -- the vim.lsp.rpc.Client instance as upvalue "client".
     local fn = lsp_client.rpc and lsp_client.rpc.request
     if type(fn) ~= "function" then return nil end
     for i = 1, 30 do
@@ -45,12 +40,8 @@ local function get_rpc_client(lsp_client)
     end
 end
 
----Patch vim.lsp.rpc.Client.handle_body at the class level so that the
----AL server's `"error": null` responses don't trigger the assertion at
----rpc.lua:452. Patching the class fixes all instances (present and future).
----
 ---@param lsp_client vim.lsp.Client
-local function ensure_client_patched(lsp_client)
+local function patch_rpc_class(lsp_client)
     if _class_patched then return end
 
     local rpc_client = get_rpc_client(lsp_client)
@@ -66,19 +57,39 @@ local function ensure_client_patched(lsp_client)
     _class_patched = true
 
     function Client_class:handle_body(body)
-        -- AL server sends {"error": null, "result": [...]}.
-        -- vim.NIL (JSON null) is truthy but not a table, causing
-        -- assert(type(decoded.error) == 'table') at rpc.lua:452 to fire,
-        -- which prevents the response callback from ever being called.
-        -- Normalize null → absent so Neovim handles the response normally.
         local ok, decoded = pcall(vim.json.decode, body, { luanil = { object = true } })
-        if ok and type(decoded) == "table" and decoded.error == vim.NIL then
-            decoded.error = nil
-            body = vim.json.encode(decoded)
+        if ok and type(decoded) == "table" then
+            local e = decoded.error
+            -- Normalize any truthy non-table error (vim.NIL, string, number…)
+            -- so Neovim's assert(type(decoded.error)=='table') doesn't fire.
+            if e and type(e) ~= "table" then
+                decoded.error = nil
+                body = vim.json.encode(decoded)
+            end
         end
         return orig(self, body)
     end
 end
+
+-- Apply patch to any al_ls clients already running when this module loads.
+vim.schedule(function()
+    for _, c in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
+        patch_rpc_class(c)
+        if _class_patched then break end
+    end
+end)
+
+-- Apply patch to al_ls clients that connect after this module loads.
+vim.api.nvim_create_autocmd("LspAttach", {
+    group = vim.api.nvim_create_augroup("neotest_al_lsp_patch", { clear = true }),
+    callback = function(args)
+        if _class_patched then return end
+        local c = vim.lsp.get_client_by_id(args.data.client_id)
+        if c and c.name == "al_ls" then
+            patch_rpc_class(c)
+        end
+    end,
+})
 
 -- ── Client resolution ─────────────────────────────────────────────────────────
 
@@ -157,8 +168,8 @@ end
 ---@param client vim.lsp.Client
 ---@return table<string, any>
 local function fetch_and_cache(client)
-    -- Patch the client once so "error": null responses don't crash Neovim's RPC.
-    ensure_client_patched(client)
+    -- Belt-and-suspenders: patch now in case the eager path above hasn't fired yet.
+    patch_rpc_class(client)
 
     -- If another coroutine is already fetching for this client, wait for it to
     -- finish rather than sending a duplicate al/discoverTests request.
