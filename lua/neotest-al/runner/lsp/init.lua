@@ -123,28 +123,52 @@ function M.new(opts)
         local output_path = vim.fn.tempname()
         local outf = io.open(output_path, "w")
         if outf then
+            -- ANSI colour helpers
+            local C = {
+                reset   = "\27[0m",
+                bold    = "\27[1m",
+                dim     = "\27[2m",
+                red     = "\27[31m",
+                green   = "\27[32m",
+                yellow  = "\27[33m",
+                cyan    = "\27[36m",
+            }
+
             -- Build log -------------------------------------------------------
             -- Normalise each message to a single line: strip \r, trim trailing
             -- newline, then re-join with \n.  al/testExecutionMessage chunks
             -- sometimes arrive without a trailing newline, so joining with ""
             -- causes lines to run together.
+            -- Colour compiler diagnostics by severity.
             local lines = {}
             for _, msg in ipairs(data.build_log or {}) do
                 local norm = msg:gsub("\r\n", "\n"):gsub("\r", "\n"):gsub("\n+$", "")
+                if norm:find(": error ", 1, true) then
+                    norm = C.red .. norm .. C.reset
+                elseif norm:find(": warning ", 1, true) then
+                    norm = C.yellow .. norm .. C.reset
+                elseif norm:find(": info ", 1, true) then
+                    norm = C.dim .. norm .. C.reset
+                end
                 table.insert(lines, norm)
             end
             outf:write(table.concat(lines, "\n"))
 
             -- Test results ----------------------------------------------------
             if data.tests and #data.tests > 0 then
-                local STATUS_ICON = { [0] = "✓", [1] = "✗", [2] = "⊘" }
-                outf:write("\n\nTest Results:\n")
+                local STATUS_FMT = {
+                    [0] = C.green  .. "✓" .. C.reset,
+                    [1] = C.red    .. "✗" .. C.reset,
+                    [2] = C.yellow .. "⊘" .. C.reset,
+                }
+                outf:write("\n\n" .. C.bold .. "Test Results:" .. C.reset .. "\n")
                 for _, t in ipairs(data.tests) do
-                    local icon = STATUS_ICON[t.status] or "?"
-                    local duration = t.duration and (" (" .. t.duration .. "ms)") or ""
-                    outf:write(("  %s %s%s\n"):format(icon, t.name, duration))
+                    local icon     = STATUS_FMT[t.status] or "?"
+                    local name     = t.status == 1 and (C.red .. t.name .. C.reset) or t.name
+                    local duration = t.duration and (C.dim .. " (" .. t.duration .. "ms)" .. C.reset) or ""
+                    outf:write(("  %s %s%s\n"):format(icon, name, duration))
                     if t.message and t.message ~= "" then
-                        outf:write(("    %s\n"):format(t.message))
+                        outf:write(("    " .. C.red .. t.message .. C.reset .. "\n"))
                     end
                 end
             end
