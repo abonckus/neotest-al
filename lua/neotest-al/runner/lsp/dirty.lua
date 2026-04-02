@@ -34,15 +34,18 @@ vim.api.nvim_create_autocmd("BufWritePost", {
     callback = function(args)
         local file_path = args.match or args.file
         if not file_path then return end
-        local found = vim.fs.find("app.json", {
-            path   = vim.fs.dirname(vim.fs.normalize(file_path)),
-            upward = true,
-            limit  = 1,
-        })
-        if found and #found > 0 then
-            local root = vim.fs.normalize(vim.fs.dirname(found[1]))
-            M.mark_dirty(root)
-        end
+        -- Defer filesystem I/O so the save itself is not blocked.
+        vim.schedule(function()
+            local found = vim.fs.find("app.json", {
+                path   = vim.fs.dirname(vim.fs.normalize(file_path)),
+                upward = true,
+                limit  = 1,
+            })
+            if found and #found > 0 then
+                local root = vim.fs.normalize(vim.fs.dirname(found[1]))
+                M.mark_dirty(root)
+            end
+        end)
     end,
 })
 
