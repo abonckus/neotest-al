@@ -179,5 +179,86 @@ describe("neotest-al.runner.lsp.launch", function()
             os.remove(tmp)
             assert.is_nil(result)
         end)
+
+        it("returns nil when workspace root cannot be found", function()
+            local orig_find = vim.fs.find
+            vim.fs.find = function(name, opts)
+                if name == "app.json" then return {} end  -- no app.json anywhere
+                return orig_find(name, opts)
+            end
+
+            local notified = false
+            local orig_notify = vim.notify
+            vim.notify = function(msg, level)
+                if msg:match("workspace root") then notified = true end
+            end
+
+            local result = run_async(function()
+                return launch.get_config("/no-project/File.al", {})
+            end)
+
+            vim.fs.find = orig_find
+            vim.notify = orig_notify
+            assert.is_nil(result)
+            assert.is_true(notified)
+        end)
+
+        it("returns cached config without re-reading launch.json on second call", function()
+            local tmp = vim.fn.tempname() .. ".json"
+            write_launch(tmp, {
+                { type = "al", request = "launch", name = "cached", server = "https://cached.example.com" },
+            })
+
+            local orig_find = vim.fs.find
+            local read_count = 0
+            local orig_open = io.open
+            local tmp_norm = vim.fs.normalize(tmp)
+            io.open = function(path, mode)
+                if vim.fs.normalize(path) == tmp_norm then read_count = read_count + 1 end
+                return orig_open(path, mode)
+            end
+            vim.fs.find = function(name, opts)
+                if name == "app.json" then return { "/workspace2/app.json" } end
+                return orig_find(name, opts)
+            end
+
+            run_async(function()
+                return launch.get_config("/workspace2/src/File.al", { launch_json_path = tmp })
+            end)
+            run_async(function()
+                return launch.get_config("/workspace2/src/File.al", { launch_json_path = tmp })
+            end)
+
+            vim.fs.find = orig_find
+            io.open = orig_open
+            os.remove(tmp)
+            assert.are.equal(1, read_count)
+        end)
+
+        it("resolves relative launch_json_path against workspace root", function()
+            local root = vim.fn.tempname()
+            vim.fn.mkdir(root, "p")
+            local vscode_dir = root .. "/custom"
+            vim.fn.mkdir(vscode_dir, "p")
+            local launch_file = vscode_dir .. "/launch.json"
+            write_launch(launch_file, {
+                { type = "al", request = "launch", name = "relative", server = "https://rel.example.com" },
+            })
+
+            local orig_find = vim.fs.find
+            vim.fs.find = function(name, opts)
+                if name == "app.json" then return { root .. "/app.json" } end
+                return orig_find(name, opts)
+            end
+
+            local result = run_async(function()
+                return launch.get_config(root .. "/src/File.al", { launch_json_path = "custom/launch.json" })
+            end)
+
+            vim.fs.find = orig_find
+            os.remove(launch_file)
+            assert.is_not_nil(result)
+            assert.are.equal("relative", result.name)
+        end)
     end)
 end)
