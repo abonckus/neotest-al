@@ -151,73 +151,111 @@ end
 
 -- ── Notification handlers ─────────────────────────────────────────────────────
 --
--- The AL server uses a PUSH model for test data:
---   al/updateTests  – server pushes the full test tree whenever it changes
---   al/discoverTests – returns empty; calling it prompts the server to re-push
+-- The AL server uses two complementary mechanisms:
 --
--- Both handlers are registered at MODULE LOAD TIME so we don't miss the first
--- al/updateTests notification that arrives before discover_positions is called.
+--   al/discoverTests (request/response)
+--     Called immediately after each al/projectsLoadedNotification in VS Code.
+--     Returns the full test tree directly. This is the primary data source.
+--
+--   al/updateTests (server-initiated notification)
+--     Pushed by the server ~3 s after the last discoverTests response.
+--     Carries the same test tree. Used to keep the cache current when the
+--     test tree changes (e.g. file saved, new test added). Acts as the
+--     invalidation + update signal.
+--
+-- Both handlers are registered at MODULE LOAD TIME so data is captured before
+-- discover_positions is ever called.
+
+-- Forward-declare so the notification handler can call it.
+local do_discover
 
 local function setup_notification_handlers()
-    -- al/updateTests: capture the pushed test tree into the cache
+    -- al/updateTests: server pushes a fresh test tree whenever it changes.
+    -- Update the cache and unblock any waiting discover_positions coroutines.
     local prev_update = vim.lsp.handlers["al/updateTests"]
     vim.lsp.handlers["al/updateTests"] = function(err, result, ctx, config)
         if result and result.testItems then
             cache[ctx.client_id] = index_by_file(result.testItems)
-            fetch_in_progress[ctx.client_id] = nil  -- unblock any waiters
+            fetch_in_progress[ctx.client_id] = nil
         end
         if prev_update then prev_update(err, result, ctx, config) end
     end
 
-    -- al/projectsLoadedNotification: invalidate cache so next call re-fetches
+    -- al/projectsLoadedNotification: a project reference finished loading.
+    -- Matches VS Code behaviour: invalidate stale cache, then immediately call
+    -- al/discoverTests to get fresh data for the newly-loaded project.
     local prev_loaded = vim.lsp.handlers["al/projectsLoadedNotification"]
     vim.lsp.handlers["al/projectsLoadedNotification"] = function(err, result, ctx, config)
         M.invalidate(ctx.client_id)
+        local client = vim.lsp.get_client_by_id(ctx.client_id)
+        if client then
+            do_discover(client)
+        end
         if prev_loaded then prev_loaded(err, result, ctx, config) end
     end
 end
 
--- Register immediately so we capture al/updateTests before discover_positions
--- is ever called.
 setup_notification_handlers()
 
 -- ── Fetch from LSP ────────────────────────────────────────────────────────────
+--
+-- do_discover: sends al/discoverTests for one client, caches result.
+--   • If the server returns test data directly (VS Code path) → use it.
+--   • If the response is empty → wait up to 10 s for al/updateTests to push it.
+--
+-- Runs inside a fresh nio task so it can be called from both the synchronous
+-- notification handler and from the async fetch_and_cache below.
+-- Forward-declared before setup_notification_handlers(); assigned here.
 
+do_discover = function(client)
+    patch_rpc_class(client)
+
+    if fetch_in_progress[client.id] then return end
+    fetch_in_progress[client.id] = true
+
+    nio.run(function()
+        local request = nio.wrap(function(cb)
+            client:request("al/discoverTests", {}, cb)
+        end, 1)
+        local err, result = request()
+
+        -- Use the response directly when it contains data (VS Code pattern).
+        if not err and type(result) == "table" and #result > 0 then
+            local data = index_by_file(result)
+            if next(data) then
+                cache[client.id] = data
+                fetch_in_progress[client.id] = nil
+                return
+            end
+        end
+
+        -- Response was empty: wait for al/updateTests to push the data.
+        -- The al/updateTests handler clears fetch_in_progress when it arrives.
+        local ticks = 0
+        while fetch_in_progress[client.id] and ticks < 500 do  -- 10 s
+            nio.sleep(20)
+            ticks = ticks + 1
+        end
+        fetch_in_progress[client.id] = nil
+    end)
+end
+
+-- fetch_and_cache: called by discover_positions when the cache is cold.
+-- Starts do_discover (if not already running) then waits for the cache.
 ---@param client vim.lsp.Client
 ---@return table<string, any>
 local function fetch_and_cache(client)
-    -- Belt-and-suspenders: patch now in case the eager path above hasn't fired yet.
-    patch_rpc_class(client)
-
-    -- If another coroutine is already fetching for this client, wait for it to
-    -- finish rather than sending a duplicate al/discoverTests request.
-    while fetch_in_progress[client.id] do
-        nio.sleep(20)
-    end
-    if cache[client.id] then
-        return cache[client.id]
+    if not fetch_in_progress[client.id] then
+        do_discover(client)
     end
 
-    -- Mark in-progress so concurrent callers wait instead of each firing their
-    -- own al/discoverTests request.
-    fetch_in_progress[client.id] = true
-
-    -- Fire al/discoverTests to prompt the server to push al/updateTests.
-    -- The response is intentionally ignored (it will be empty); the real data
-    -- arrives via the al/updateTests handler registered at module load time,
-    -- which sets cache[client.id] and clears fetch_in_progress[client.id].
-    local request = nio.wrap(function(cb)
-        client:request("al/discoverTests", {}, cb)
-    end, 1)
-    request()  -- response ignored
-
-    -- Wait up to 10 s for al/updateTests to populate the cache.
+    -- Wait up to 10 s for do_discover or a concurrent notification to fill
+    -- the cache.
     local ticks = 0
-    while fetch_in_progress[client.id] and ticks < 500 do  -- 500 × 20 ms = 10 s
+    while not cache[client.id] and ticks < 500 do  -- 10 s
         nio.sleep(20)
         ticks = ticks + 1
     end
-    fetch_in_progress[client.id] = nil
 
     return cache[client.id] or {}
 end
