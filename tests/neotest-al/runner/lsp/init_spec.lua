@@ -70,6 +70,18 @@ describe("neotest-al.runner.lsp.init", function()
         }
     end
 
+    local function make_client(id, root)
+        return {
+            id       = id,
+            root_dir = root,
+            request  = function(self, method, params, cb)
+                -- Default: project closure is always loaded
+                vim.schedule(function() cb(nil, { loaded = true }) end)
+                return true, id
+            end,
+        }
+    end
+
     local function make_discovery(items_by_path, client)
         return {
             get_items  = function(path) return items_by_path[vim.fs.normalize(path)] end,
@@ -102,7 +114,7 @@ describe("neotest-al.runner.lsp.init", function()
         end)
 
         it("returns nil when no test items collected", function()
-            local client    = { id = 600, root_dir = "/ws" }
+            local client    = make_client(600, "/ws")
             local discovery = make_discovery({}, client)  -- empty — get_items returns nil
             local spec = run_async(function()
                 return lsp_runner.build_spec(
@@ -114,7 +126,7 @@ describe("neotest-al.runner.lsp.init", function()
         end)
 
         it("returns spec with results_path and id_map", function()
-            local client = { id = 601, root_dir = "/ws" }
+            local client = make_client(601, "/ws")
             local norm   = vim.fs.normalize("/ws/F.al")
             local discovery = make_discovery({
                 [norm] = {
@@ -136,6 +148,75 @@ describe("neotest-al.runner.lsp.init", function()
             assert.is_not_nil(spec.context.results_path)
             assert.is_not_nil(spec.context.id_map)
             assert.are.equal(norm .. "::TestA", spec.context.id_map["500:TestA"])
+        end)
+
+        it("polls al/hasProjectClosureLoadedRequest before running tests", function()
+            local requests_made = {}
+            local client = {
+                id       = 700,
+                root_dir = "/ws",
+                request  = function(self, method, params, cb)
+                    table.insert(requests_made, { method = method, params = params })
+                    vim.schedule(function() cb(nil, { loaded = true }) end)
+                    return true, 700
+                end,
+            }
+            local norm = vim.fs.normalize("/ws/F.al")
+            local discovery = make_discovery({
+                [norm] = {
+                    codeunit_name = "My Codeunit",
+                    codeunit_id   = 500,
+                    tests = {
+                        { name = "TestA", appId = "abc", codeunitId = 500, scope = 2,
+                          location = { source = "file:///ws/F.al",
+                            range = { start = { line = 1, character = 0 }, ["end"] = { line = 1, character = 5 } } } },
+                    },
+                },
+            }, client)
+
+            local tree = make_tree("test", "/ws/F.al", "TestA", norm .. "::TestA")
+            run_async(function()
+                local runner = require("neotest-al.runner.lsp.init").new()
+                runner.build_spec({ tree = tree }, discovery)
+            end)
+
+            local methods = vim.tbl_map(function(r) return r.method end, requests_made)
+            assert.is_true(
+                vim.tbl_contains(methods, "al/hasProjectClosureLoadedRequest"),
+                "expected al/hasProjectClosureLoadedRequest to be called"
+            )
+        end)
+
+        it("returns nil when project closure not loaded within timeout", function()
+            local client = {
+                id       = 701,
+                root_dir = "/ws",
+                request  = function(self, method, params, cb)
+                    vim.schedule(function() cb(nil, { loaded = false }) end)
+                    return true, 701
+                end,
+            }
+            local norm = vim.fs.normalize("/ws/F.al")
+            local discovery = make_discovery({
+                [norm] = {
+                    codeunit_name = "My Codeunit",
+                    codeunit_id   = 500,
+                    tests = {
+                        { name = "TestA", appId = "abc", codeunitId = 500, scope = 2,
+                          location = { source = "file:///ws/F.al",
+                            range = { start = { line = 1, character = 0 }, ["end"] = { line = 1, character = 5 } } } },
+                    },
+                },
+            }, client)
+
+            local tree = make_tree("test", "/ws/F.al", "TestA", norm .. "::TestA")
+            -- _closure_max_polls=1 so timeout is hit in ~200ms, not 30s
+            local runner = require("neotest-al.runner.lsp.init").new({ _closure_max_polls = 1 })
+            local spec = run_async(function()
+                return runner.build_spec({ tree = tree }, discovery)
+            end)
+
+            assert.is_nil(spec)
         end)
     end)
 

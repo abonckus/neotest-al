@@ -1,3 +1,4 @@
+local nio         = require("nio")
 local launch      = require("neotest-al.runner.lsp.launch")
 local dirty       = require("neotest-al.runner.lsp.dirty")
 local run         = require("neotest-al.runner.lsp.run")
@@ -39,6 +40,33 @@ local function collect_items(tree, discovery)
     return items, id_map
 end
 
+-- Poll al/hasProjectClosureLoadedRequest until the project closure is loaded or timeout.
+-- Matches VSCode's behaviour of polling this before sending al/runTests.
+-- workspacePath is sent in OS-native backslash format on Windows.
+---@async
+---@param client       vim.lsp.Client
+---@param workspace_root string  normalized (forward-slash) workspace root
+---@param max_polls?   integer  max 200ms poll iterations (default 150 = 30 s); override in tests
+---@return boolean
+local function wait_for_project_closure(client, workspace_root, max_polls)
+    max_polls = max_polls or 150
+    local path = workspace_root
+    if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
+        path = workspace_root:gsub("/", "\\")
+    end
+
+    local request = nio.wrap(function(cb)
+        client:request("al/hasProjectClosureLoadedRequest", { workspacePath = path }, cb)
+    end, 1)
+
+    for _ = 1, max_polls do
+        local err, result = request()
+        if not err and result and result.loaded then return true end
+        nio.sleep(200)
+    end
+    return false
+end
+
 --- Create a new LSP runner instance.
 ---@param opts? { launch_json_path?: string, vscode_extension_version?: string }
 ---@return neotest-al.Runner
@@ -69,6 +97,17 @@ function M.new(opts)
             return nil
         end
 
+        local workspace_root = vim.fs.normalize(client.root_dir or "")
+
+        -- Ensure project closure is loaded (VSCode always polls this before al/runTests)
+        if not wait_for_project_closure(client, workspace_root, opts._closure_max_polls) then
+            vim.notify(
+                "neotest-al: AL project closure not loaded — ensure the AL extension has finished loading",
+                vim.log.levels.WARN
+            )
+            return nil
+        end
+
         -- Collect raw LSP test items + build the id_map
         local test_items, id_map = collect_items(args.tree, discovery)
         if #test_items == 0 then
@@ -81,8 +120,7 @@ function M.new(opts)
         if not config then return nil end
 
         -- Determine SkipPublish from dirty state
-        local workspace_root = vim.fs.normalize(client.root_dir or "")
-        local skip_publish   = not dirty.is_dirty(workspace_root)
+        local skip_publish = not dirty.is_dirty(workspace_root)
 
         -- Execute tests (blocks until al/testRunComplete or timeout)
         local results_path = vim.fn.tempname() .. ".json"
