@@ -90,18 +90,6 @@ vim.schedule(function()
     end
 end)
 
--- Apply patch to al_ls clients that connect after this module loads.
-vim.api.nvim_create_autocmd("LspAttach", {
-    group = vim.api.nvim_create_augroup("neotest_al_lsp_patch", { clear = true }),
-    callback = function(args)
-        if _class_patched then return end
-        local c = vim.lsp.get_client_by_id(args.data.client_id)
-        if c and c.name == "al_ls" then
-            patch_rpc_class(c)
-        end
-    end,
-})
-
 -- ── Path normalisation ────────────────────────────────────────────────────────
 
 -- On Windows, drive letters can differ in case between LSP URIs ("file:///c:/")
@@ -287,6 +275,28 @@ local function setup_notification_handlers()
         end
         if prev_loaded then prev_loaded(err, result, ctx, config) end
     end
+
+    -- Apply patch + eager al/discoverTests fetch when an al_ls client attaches.
+    -- This populates raw_tree and test_file_set before neotest's first is_test_file
+    -- scan, breaking the bootstrapping chicken-and-egg problem.
+    vim.api.nvim_create_autocmd("LspAttach", {
+        group = vim.api.nvim_create_augroup("neotest_al_lsp_patch", { clear = true }),
+        callback = function(args)
+            local c = vim.lsp.get_client_by_id(args.data.client_id)
+            if c and c.name == "al_ls" then
+                patch_rpc_class(c)
+                c:request("al/discoverTests", {}, function(err, response)
+                    if not err and type(response) == "table" and #response > 0 then
+                        vim.schedule(function()
+                            raw_tree[c.id] = response
+                            cache[c.id]    = nil
+                            build_test_file_set(c.id)
+                        end)
+                    end
+                end)
+            end
+        end,
+    })
 end
 
 -- Register immediately so we capture al/updateTests before discover_positions
