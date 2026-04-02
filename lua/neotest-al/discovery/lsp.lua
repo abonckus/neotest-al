@@ -276,14 +276,21 @@ local function fetch_and_cache(client)
     fetch_in_progress[client.id] = true
 
     -- al/discoverTests is the primary data source for discovery.
-    -- We use the response directly; al/updateTests is a secondary reactive refresh.
+    -- Retry up to 10 s (50 × 200 ms) in case the server isn't ready yet and
+    -- returns an empty response.  al/updateTests may also populate raw_tree
+    -- reactively while we wait — bail early if it does.
     local request = nio.wrap(function(cb)
         client:request("al/discoverTests", {}, cb)
     end, 1)
-    local err, result = request()
-    if not err and type(result) == "table" and #result > 0 then
-        raw_tree[client.id] = result
-        cache[client.id]    = nil
+    for _ = 1, 50 do
+        if raw_tree[client.id] then break end  -- al/updateTests beat us to it
+        local err, result = request()
+        if not err and type(result) == "table" and #result > 0 then
+            raw_tree[client.id] = result
+            cache[client.id]    = nil
+            break
+        end
+        nio.sleep(200)
     end
 
     fetch_in_progress[client.id] = nil

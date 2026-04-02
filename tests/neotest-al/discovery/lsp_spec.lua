@@ -307,6 +307,39 @@ describe("neotest-al.discovery.lsp", function()
             assert.are.equal("My Test Codeunit", tree:data().name)
         end)
 
+        it("retries al/discoverTests when server returns empty response", function()
+            local call_count = 0
+            local root = vim.fn.fnamemodify("tests/fixtures", ":p")
+            local client = {
+                id       = 160,
+                root_dir = root,
+                request  = function(self, method, params, cb)
+                    if method == "al/discoverTests" then
+                        call_count = call_count + 1
+                        if call_count == 1 then
+                            vim.schedule(function() cb(nil, {}) end)       -- first: not ready
+                        else
+                            vim.schedule(function() cb(nil, mock_response(fixture_uri)) end)
+                        end
+                    end
+                    return true, 1
+                end,
+            }
+            local orig = vim.lsp.get_clients
+            vim.lsp.get_clients = function() return { client } end
+
+            local tree = run_async(function()
+                return lsp.discover_positions(fixture_path)
+            end)
+
+            vim.lsp.get_clients = orig
+            lsp.invalidate(160)
+
+            assert.is_not_nil(tree, "expected retry to succeed on second attempt")
+            assert.are.equal("My Test Codeunit", tree:data().name)
+            assert.are.equal(2, call_count)
+        end)
+
         it("fires al/discoverTests immediately on al/projectsLoadedNotification", function()
             local requests_fired = {}
             local mock_client = {
