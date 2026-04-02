@@ -276,6 +276,27 @@ local function setup_notification_handlers()
         if prev_loaded then prev_loaded(err, result, ctx, config) end
     end
 
+    -- al/activeProjectLoaded: fired by newer AL LSP versions when the project
+    -- closure finishes loading (replaces al/projectsLoadedNotification).
+    -- Call al/discoverTests immediately — the server is ready at this point.
+    local prev_active = vim.lsp.handlers["al/activeProjectLoaded"]
+    vim.lsp.handlers["al/activeProjectLoaded"] = function(err, result, ctx, config)
+        local client_id = ctx.client_id
+        local client = vim.lsp.get_client_by_id(client_id)
+        if client then
+            client:request("al/discoverTests", {}, function(req_err, response)
+                if not req_err and type(response) == "table" and #response > 0 then
+                    vim.schedule(function()
+                        raw_tree[client_id] = response
+                        cache[client_id]    = nil
+                        build_test_file_set(client_id)
+                    end)
+                end
+            end)
+        end
+        if prev_active then prev_active(err, result, ctx, config) end
+    end
+
     -- Apply patch + eager al/discoverTests fetch when an al_ls client attaches.
     -- This populates raw_tree and test_file_set before neotest's first is_test_file
     -- scan, breaking the bootstrapping chicken-and-egg problem.
