@@ -8,6 +8,39 @@ M.name = "lsp"
 -- cache[client_id] = { [norm_file_path] = { codeunit_name, codeunit_id, tests[] } }
 local cache = {}
 
+-- fetch_in_progress[client_id] = true while an al/discoverTests request is in flight.
+-- Prevents N concurrent discover_positions calls from each sending a separate request.
+local fetch_in_progress = {}
+
+-- patched_clients[client_id] = true once the client's handle_body has been patched.
+local patched_clients = {}
+
+-- ── Client patching ──────────────────────────────────────────────────────────
+--
+-- The AL Language Server sends JSON-RPC responses with `"error": null` alongside
+-- a valid `result`. In Lua, `vim.NIL` (how null is decoded) is truthy, so
+-- Neovim's assertion `assert(type(decoded.error) == 'table')` in rpc.lua fires,
+-- the response callback is never called, and our nio coroutine hangs forever.
+--
+-- Fix: shadow `handle_body` on the client instance to strip `"error": null`
+-- before Neovim processes the body.
+
+---@param client vim.lsp.Client
+local function ensure_client_patched(client)
+    if patched_clients[client.id] then return end
+    patched_clients[client.id] = true
+
+    local orig = client.handle_body
+    function client:handle_body(body)
+        local ok, decoded = pcall(vim.json.decode, body, { luanil = { object = true, array = true } })
+        if ok and type(decoded) == "table" and decoded.error == vim.NIL then
+            decoded.error = nil
+            body = vim.json.encode(decoded)
+        end
+        return orig(self, body)
+    end
+end
+
 -- ── Client resolution ─────────────────────────────────────────────────────────
 
 ---@param path string
@@ -61,7 +94,8 @@ function M.invalidate(client_id)
     if client_id then
         cache[client_id] = nil
     else
-        cache = {}
+        cache             = {}
+        fetch_in_progress = {}
     end
 end
 
@@ -84,10 +118,25 @@ end
 ---@param client vim.lsp.Client
 ---@return table<string, any>
 local function fetch_and_cache(client)
+    -- Patch the client once so "error": null responses don't crash Neovim's RPC.
+    ensure_client_patched(client)
+
+    -- If another coroutine is already fetching for this client, wait for it to
+    -- finish rather than sending a duplicate al/discoverTests request.
+    while fetch_in_progress[client.id] do
+        nio.sleep(20)
+    end
+    if cache[client.id] then
+        return cache[client.id]
+    end
+
+    fetch_in_progress[client.id] = true
     local request = nio.wrap(function(cb)
         client:request("al/discoverTests", {}, cb)
     end, 1)
     local err, result = request()
+    fetch_in_progress[client.id] = nil
+
     if err then
         vim.notify(
             "neotest-al: al/discoverTests failed: " .. vim.inspect(err),
