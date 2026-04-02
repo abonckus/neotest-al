@@ -123,7 +123,9 @@ function M.new(opts)
         local output_path = vim.fn.tempname()
         local outf = io.open(output_path, "w")
         if outf then
-            outf:write(table.concat(data.build_log or {}, ""))
+            -- Strip \r so \r\n from al/testExecutionMessage renders correctly in Neovim.
+            local content = table.concat(data.build_log or {}, ""):gsub("\r\n", "\n"):gsub("\r", "\n")
+            outf:write(content)
             outf:close()
         end
         local id_map  = spec.context.id_map or {}
