@@ -214,10 +214,11 @@ end
 
 -- ── Notification handlers ─────────────────────────────────────────────────────
 --
--- al/updateTests fires on every save for large projects.  We store the raw
--- testItems unchanged (O(1)) and clear the per-file lazy cache so the next
--- discover_positions call re-extracts from fresh data.  No uri_to_path calls
--- happen here, so the save never blocks the UI.
+-- al/updateTests is a reactive notification — the server pushes it on init and
+-- after reloads.  We treat it as a cache refresh: store the new tree and
+-- invalidate the per-file lazy cache.  Primary discovery uses al/discoverTests
+-- directly; al/updateTests just keeps the cache current between explicit calls.
+-- No uri_to_path calls happen here, so the notification never blocks the UI.
 
 local function setup_notification_handlers()
     local prev_update = vim.lsp.handlers["al/updateTests"]
@@ -226,9 +227,8 @@ local function setup_notification_handlers()
             local client_id = ctx.client_id
             local items     = result.testItems
             vim.schedule(function()
-                raw_tree[client_id]          = items
-                cache[client_id]             = nil  -- invalidate lazy per-file cache
-                fetch_in_progress[client_id] = nil  -- unblock any waiters
+                raw_tree[client_id] = items
+                cache[client_id]    = nil  -- invalidate lazy per-file cache
             end)
         end
         if prev_update then prev_update(err, result, ctx, config) end
@@ -248,9 +248,8 @@ local function setup_notification_handlers()
             client:request("al/discoverTests", {}, function(req_err, response)
                 if not req_err and type(response) == "table" and #response > 0 then
                     vim.schedule(function()
-                        raw_tree[client_id]          = response
-                        cache[client_id]             = nil
-                        fetch_in_progress[client_id] = nil
+                        raw_tree[client_id] = response
+                        cache[client_id]    = nil
                     end)
                 end
             end)
@@ -276,18 +275,17 @@ local function fetch_and_cache(client)
 
     fetch_in_progress[client.id] = true
 
-    -- Fire al/discoverTests to prompt the server to push al/updateTests.
+    -- al/discoverTests is the primary data source for discovery.
+    -- We use the response directly; al/updateTests is a secondary reactive refresh.
     local request = nio.wrap(function(cb)
         client:request("al/discoverTests", {}, cb)
     end, 1)
-    request()  -- response ignored; real data arrives via al/updateTests handler
-
-    -- Wait up to 10 s for al/updateTests to populate raw_tree.
-    local ticks = 0
-    while fetch_in_progress[client.id] and ticks < 500 do
-        nio.sleep(20)
-        ticks = ticks + 1
+    local err, result = request()
+    if not err and type(result) == "table" and #result > 0 then
+        raw_tree[client.id] = result
+        cache[client.id]    = nil
     end
+
     fetch_in_progress[client.id] = nil
 end
 

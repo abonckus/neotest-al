@@ -115,18 +115,7 @@ describe("neotest-al.discovery.lsp", function()
                 id       = id,
                 root_dir = root,
                 request  = function(self, method, params, cb)
-                    vim.schedule(function()
-                        -- Simulate the real server: al/discoverTests triggers an al/updateTests push.
-                        -- fetch_and_cache ignores the al/discoverTests callback and waits for
-                        -- al/updateTests to populate the cache.
-                        if method == "al/discoverTests" then
-                            local handler = vim.lsp.handlers["al/updateTests"]
-                            if handler then
-                                handler(nil, { testItems = response or {} }, { client_id = id }, nil)
-                            end
-                        end
-                        cb(nil, response)
-                    end)
+                    vim.schedule(function() cb(nil, response) end)
                     return true, 1
                 end,
             }
@@ -247,13 +236,7 @@ describe("neotest-al.discovery.lsp", function()
                 root_dir = root,
                 request  = function(self, method, params, cb)
                     request_count = request_count + 1
-                    vim.schedule(function()
-                        if method == "al/discoverTests" then
-                            local h = vim.lsp.handlers["al/updateTests"]
-                            if h then h(nil, { testItems = mock_response(fixture_uri) }, { client_id = 101 }, nil) end
-                        end
-                        cb(nil, mock_response(fixture_uri))
-                    end)
+                    vim.schedule(function() cb(nil, mock_response(fixture_uri)) end)
                     return true, 1
                 end,
             }
@@ -277,13 +260,7 @@ describe("neotest-al.discovery.lsp", function()
                 root_dir = root,
                 request  = function(self, method, params, cb)
                     request_count = request_count + 1
-                    vim.schedule(function()
-                        if method == "al/discoverTests" then
-                            local h = vim.lsp.handlers["al/updateTests"]
-                            if h then h(nil, { testItems = mock_response(fixture_uri) }, { client_id = 102 }, nil) end
-                        end
-                        cb(nil, mock_response(fixture_uri))
-                    end)
+                    vim.schedule(function() cb(nil, mock_response(fixture_uri)) end)
                     return true, 1
                 end,
             }
@@ -298,6 +275,36 @@ describe("neotest-al.discovery.lsp", function()
             lsp.invalidate(102)
 
             assert.are.equal(2, request_count)
+        end)
+
+        it("populates raw_tree directly from al/discoverTests response without al/updateTests", function()
+            -- This client returns data from al/discoverTests but never fires al/updateTests.
+            -- The old code ignores the response and waits 10 s for al/updateTests → times out.
+            -- The new code must use the response directly.
+            local root = vim.fn.fnamemodify("tests/fixtures", ":p")
+            local client = {
+                id       = 150,
+                root_dir = root,
+                request  = function(self, method, params, cb)
+                    if method == "al/discoverTests" then
+                        vim.schedule(function() cb(nil, mock_response(fixture_uri)) end)
+                    end
+                    return true, 1
+                end,
+            }
+            local orig = vim.lsp.get_clients
+            vim.lsp.get_clients = function() return { client } end
+
+            local tree = run_async(function()
+                return lsp.discover_positions(fixture_path)
+            end)
+
+            vim.lsp.get_clients = orig
+            lsp.invalidate(150)
+
+            assert.is_not_nil(tree,
+                "expected discover_positions to use al/discoverTests response directly")
+            assert.are.equal("My Test Codeunit", tree:data().name)
         end)
 
         it("fires al/discoverTests immediately on al/projectsLoadedNotification", function()
