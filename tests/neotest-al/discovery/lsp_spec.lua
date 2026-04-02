@@ -115,7 +115,18 @@ describe("neotest-al.discovery.lsp", function()
                 id       = id,
                 root_dir = root,
                 request  = function(self, method, params, cb)
-                    vim.schedule(function() cb(nil, response) end)
+                    vim.schedule(function()
+                        -- Simulate the real server: al/discoverTests triggers an al/updateTests push.
+                        -- fetch_and_cache ignores the al/discoverTests callback and waits for
+                        -- al/updateTests to populate the cache.
+                        if method == "al/discoverTests" then
+                            local handler = vim.lsp.handlers["al/updateTests"]
+                            if handler then
+                                handler(nil, { testItems = response or {} }, { client_id = id }, nil)
+                            end
+                        end
+                        cb(nil, response)
+                    end)
                     return true, 1
                 end,
             }
@@ -236,7 +247,13 @@ describe("neotest-al.discovery.lsp", function()
                 root_dir = root,
                 request  = function(self, method, params, cb)
                     request_count = request_count + 1
-                    vim.schedule(function() cb(nil, mock_response(fixture_uri)) end)
+                    vim.schedule(function()
+                        if method == "al/discoverTests" then
+                            local h = vim.lsp.handlers["al/updateTests"]
+                            if h then h(nil, { testItems = mock_response(fixture_uri) }, { client_id = 101 }, nil) end
+                        end
+                        cb(nil, mock_response(fixture_uri))
+                    end)
                     return true, 1
                 end,
             }
@@ -260,7 +277,13 @@ describe("neotest-al.discovery.lsp", function()
                 root_dir = root,
                 request  = function(self, method, params, cb)
                     request_count = request_count + 1
-                    vim.schedule(function() cb(nil, mock_response(fixture_uri)) end)
+                    vim.schedule(function()
+                        if method == "al/discoverTests" then
+                            local h = vim.lsp.handlers["al/updateTests"]
+                            if h then h(nil, { testItems = mock_response(fixture_uri) }, { client_id = 102 }, nil) end
+                        end
+                        cb(nil, mock_response(fixture_uri))
+                    end)
                     return true, 1
                 end,
             }
