@@ -18,6 +18,10 @@ return function(config)
         "neotest-al: discovery must implement invalidate(client_id?)"
     )
     assert(
+        type(discovery.is_test_file) == "function",
+        "neotest-al: discovery must implement is_test_file(path)"
+    )
+    assert(
         type(runner.build_spec) == "function",
         "neotest-al: runner must implement build_spec(args, discovery)"
     )
@@ -31,7 +35,7 @@ return function(config)
         name = "neotest-al",
         root = lib.files.match_root_pattern(".alpackages", "app.json"),
 
-        is_test_file = base.is_test_file,
+        is_test_file = function(path) return discovery.is_test_file(path) end,
 
         ---@async
         discover_positions = function(path)

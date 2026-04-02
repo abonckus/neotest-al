@@ -11,11 +11,15 @@ describe("neotest-al.adapter", function()
             name               = "stub",
             discover_positions = function() end,
             invalidate         = function() end,
+            is_test_file       = function() return false end,
         }
         if overrides then
             for k, v in pairs(overrides) do t[k] = v end
             -- allow explicit nil removal via sentinel
-            for k, _ in pairs({ discover_positions = true, invalidate = true, name = true }) do
+            for k, _ in pairs({
+                discover_positions = true, invalidate = true,
+                name = true, is_test_file = true,
+            }) do
                 if overrides[k] == false then t[k] = nil end
             end
         end
@@ -53,6 +57,15 @@ describe("neotest-al.adapter", function()
                 runner    = stub_runner(),
             })
         end, "neotest-al: discovery must implement invalidate(client_id?)")
+    end)
+
+    it("raises when discovery is missing is_test_file", function()
+        assert.has_error(function()
+            create_adapter({
+                discovery = stub_discovery({ is_test_file = false }),
+                runner    = stub_runner(),
+            })
+        end, "neotest-al: discovery must implement is_test_file(path)")
     end)
 
     it("raises when runner is missing build_spec", function()
@@ -100,6 +113,22 @@ describe("neotest-al.adapter", function()
         adapter.build_spec({ tree = { data = function() return { type = "test", path = "" } end } })
 
         assert.are.equal(discovery, received_discovery)
+    end)
+
+    it("delegates is_test_file to discovery.is_test_file", function()
+        local called_with = nil
+        local discovery = stub_discovery({
+            is_test_file = function(path)
+                called_with = path
+                return true
+            end,
+        })
+        local adapter = create_adapter({ discovery = discovery, runner = stub_runner() })
+
+        local result = adapter.is_test_file("/workspace/Foo.al")
+
+        assert.are.equal("/workspace/Foo.al", called_with)
+        assert.is_true(result)
     end)
 
     it("delegates results to runner.results", function()
