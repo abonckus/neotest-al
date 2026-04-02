@@ -78,7 +78,7 @@ describe("neotest-al.discovery.lsp", function()
 
         it("groups tests under their normalized file path", function()
             local uri   = "file:///workspace/File.al"
-            local fpath = vim.fs.normalize(vim.uri_to_fname(uri))
+            local fpath = lsp._norm(vim.uri_to_fname(uri))
             local result = lsp._index_by_file(make_response(uri))
 
             assert.is_not_nil(result[fpath])

@@ -97,15 +97,29 @@ vim.api.nvim_create_autocmd("LspAttach", {
     end,
 })
 
+-- ── Path normalisation ────────────────────────────────────────────────────────
+
+-- On Windows, drive letters can differ in case between LSP URIs ("file:///c:/")
+-- and filesystem paths ("C:/").  Lowercase everything on Windows so all
+-- comparisons and cache keys are consistent.
+local IS_WINDOWS = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
+
+---@param path string
+---@return string  normalised (and lowercased on Windows)
+local function norm(path)
+    local n = vim.fs.normalize(path)
+    return IS_WINDOWS and n:lower() or n
+end
+
 -- ── Client resolution ─────────────────────────────────────────────────────────
 
 ---@param path string
 ---@return vim.lsp.Client|nil
 local function find_client(path)
-    local norm = vim.fs.normalize(path)
+    local np = norm(path)
     for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
-        local root = vim.fs.normalize(client.root_dir or "")
-        if #root > 0 and norm:sub(1, #root) == root and norm:sub(#root + 1, #root + 1) == "/" then
+        local root = norm(client.root_dir or "")
+        if #root > 0 and np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/" then
             return client
         end
     end
@@ -114,9 +128,9 @@ end
 -- ── Per-file lazy extraction ──────────────────────────────────────────────────
 
 ---@param uri string  e.g. "file:///c:/..."
----@return string     normalized filesystem path
+---@return string     normalised filesystem path
 local function uri_to_path(uri)
-    return vim.fs.normalize(vim.uri_to_fname(uri))
+    return norm(vim.uri_to_fname(uri))
 end
 
 -- Build the full file-indexed table from raw testItems — kept for tests and
@@ -152,6 +166,7 @@ end
 ---@param norm_path string  normalized file path
 ---@return {codeunit_name:string, codeunit_id:integer, tests:table[]}|nil
 local function find_for_path(client_id, norm_path)
+    -- norm_path must already be normalised with norm() by the caller
     if not cache[client_id] then cache[client_id] = {} end
     if cache[client_id][norm_path] ~= nil then
         local v = cache[client_id][norm_path]
@@ -274,8 +289,7 @@ function M.discover_positions(path)
 
     if not raw_tree[client.id] then return nil end
 
-    local norm      = vim.fs.normalize(path)
-    local file_data = find_for_path(client.id, norm)
+    local file_data = find_for_path(client.id, norm(path))
     if not file_data or #file_data.tests == 0 then
         return nil
     end
@@ -308,15 +322,16 @@ end
 -- ── Test-only exports ─────────────────────────────────────────────────────────
 M._find_client   = find_client
 M._index_by_file = index_by_file
+M._norm          = norm
 
 --- Returns the test entry for a file path, extracting lazily from the raw tree.
 --- Used by the LSP runner to get raw LSP test items for al/runTests.
 ---@param path string  normalized filesystem path
 ---@return { codeunit_name: string, codeunit_id: integer, tests: table[] }|nil
 function M.get_items(path)
-    local norm = vim.fs.normalize(path)
+    local np = norm(path)
     for client_id in pairs(raw_tree) do
-        local data = find_for_path(client_id, norm)
+        local data = find_for_path(client_id, np)
         if data then return data end
     end
 end
