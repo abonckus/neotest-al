@@ -123,9 +123,16 @@ function M.new(opts)
         local output_path = vim.fn.tempname()
         local outf = io.open(output_path, "w")
         if outf then
-            -- Strip \r so \r\n from al/testExecutionMessage renders correctly in Neovim.
-            local content = table.concat(data.build_log or {}, ""):gsub("\r\n", "\n"):gsub("\r", "\n")
-            outf:write(content)
+            -- Normalise each message to a single line: strip \r, trim trailing
+            -- newline, then re-join with \n.  al/testExecutionMessage chunks
+            -- sometimes arrive without a trailing newline, so joining with ""
+            -- causes lines to run together.
+            local lines = {}
+            for _, msg in ipairs(data.build_log or {}) do
+                local norm = msg:gsub("\r\n", "\n"):gsub("\r", "\n"):gsub("\n+$", "")
+                table.insert(lines, norm)
+            end
+            outf:write(table.concat(lines, "\n"))
             outf:close()
         end
         local id_map  = spec.context.id_map or {}

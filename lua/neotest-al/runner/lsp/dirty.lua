@@ -27,25 +27,37 @@ function M.mark_clean(root)
 end
 
 -- Register a global BufWritePost autocmd for *.al files.
--- On each save, walk up to app.json to find the workspace root and mark dirty.
+-- Marks the owning workspace as dirty.
+--
+-- We deliberately avoid vim.fs.find (filesystem walk) in this callback —
+-- even deferred via vim.schedule, it can stall the UI on Windows when
+-- antivirus scanning is active.  Instead we match the saved file's path
+-- against the set of workspace roots that init.lua has already populated
+-- via mark_clean().  Before any test run all workspaces are considered
+-- dirty by default (is_dirty returns true for never-published roots), so
+-- missing a pre-run save is harmless.
 vim.api.nvim_create_autocmd("BufWritePost", {
     group   = vim.api.nvim_create_augroup("neotest_al_dirty_tracker", { clear = true }),
     pattern = "*.al",
     callback = function(args)
         local file_path = args.match or args.file
         if not file_path then return end
-        -- Defer filesystem I/O so the save itself is not blocked.
-        vim.schedule(function()
-            local found = vim.fs.find("app.json", {
-                path   = vim.fs.dirname(vim.fs.normalize(file_path)),
-                upward = true,
-                limit  = 1,
-            })
-            if found and #found > 0 then
-                local root = vim.fs.normalize(vim.fs.dirname(found[1]))
-                M.mark_dirty(root)
+        local norm = vim.fs.normalize(file_path)
+        -- Find a known root that is a prefix of this file path.
+        local matched = false
+        for root in pairs(published) do
+            if norm:sub(1, #root) == root then
+                dirty[root] = true
+                matched = true
             end
-        end)
+        end
+        -- If no known root yet (no test run has completed), mark every
+        -- known root dirty as a conservative fallback.
+        if not matched then
+            for root in pairs(dirty) do
+                dirty[root] = true
+            end
+        end
     end,
 })
 
