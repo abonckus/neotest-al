@@ -123,6 +123,7 @@ function M.new(opts)
         local output_path = vim.fn.tempname()
         local outf = io.open(output_path, "w")
         if outf then
+            -- Build log -------------------------------------------------------
             -- Normalise each message to a single line: strip \r, trim trailing
             -- newline, then re-join with \n.  al/testExecutionMessage chunks
             -- sometimes arrive without a trailing newline, so joining with ""
@@ -133,6 +134,21 @@ function M.new(opts)
                 table.insert(lines, norm)
             end
             outf:write(table.concat(lines, "\n"))
+
+            -- Test results ----------------------------------------------------
+            if data.tests and #data.tests > 0 then
+                local STATUS_ICON = { [0] = "✓", [1] = "✗", [2] = "⊘" }
+                outf:write("\n\nTest Results:\n")
+                for _, t in ipairs(data.tests) do
+                    local icon = STATUS_ICON[t.status] or "?"
+                    local duration = t.duration and (" (" .. t.duration .. "ms)") or ""
+                    outf:write(("  %s %s%s\n"):format(icon, t.name, duration))
+                    if t.message and t.message ~= "" then
+                        outf:write(("    %s\n"):format(t.message))
+                    end
+                end
+            end
+
             outf:close()
         end
         local id_map  = spec.context.id_map or {}
