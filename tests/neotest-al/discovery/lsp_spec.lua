@@ -347,6 +347,10 @@ describe("neotest-al.discovery.lsp", function()
                 },
             }, ctx, nil)
 
+            -- The handler defers cache population via vim.schedule; pump the
+            -- event loop once so the scheduled callback runs before we read.
+            vim.wait(100, function() return lsp.get_items(fpath) ~= nil end, 10)
+
             local entry = lsp.get_items(fpath)
             assert.is_not_nil(entry)
             assert.are.equal("My Codeunit", entry.codeunit_name)

@@ -159,12 +159,19 @@ end
 -- al/updateTests notification that arrives before discover_positions is called.
 
 local function setup_notification_handlers()
-    -- al/updateTests: capture the pushed test tree into the cache
+    -- al/updateTests: capture the pushed test tree into the cache.
+    -- index_by_file iterates every test item (uri_to_path per item) which
+    -- can be slow for large projects.  Defer the work so the LSP message
+    -- handler returns immediately and does not block the UI on save.
     local prev_update = vim.lsp.handlers["al/updateTests"]
     vim.lsp.handlers["al/updateTests"] = function(err, result, ctx, config)
         if result and result.testItems then
-            cache[ctx.client_id] = index_by_file(result.testItems)
-            fetch_in_progress[ctx.client_id] = nil  -- unblock any waiters
+            local client_id = ctx.client_id
+            local items     = result.testItems
+            vim.schedule(function()
+                cache[client_id]             = index_by_file(items)
+                fetch_in_progress[client_id] = nil  -- unblock any waiters
+            end)
         end
         if prev_update then prev_update(err, result, ctx, config) end
     end
