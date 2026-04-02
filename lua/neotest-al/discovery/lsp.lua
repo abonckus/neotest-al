@@ -149,19 +149,37 @@ function M.invalidate(client_id)
     end
 end
 
--- ── Notification handler (invalidate on project reload) ───────────────────────
+-- ── Notification handlers ─────────────────────────────────────────────────────
+--
+-- The AL server uses a PUSH model for test data:
+--   al/updateTests  – server pushes the full test tree whenever it changes
+--   al/discoverTests – returns empty; calling it prompts the server to re-push
+--
+-- Both handlers are registered at MODULE LOAD TIME so we don't miss the first
+-- al/updateTests notification that arrives before discover_positions is called.
 
-local _handler_registered = false
-local function ensure_notification_handler()
-    if _handler_registered then return end
-    _handler_registered = true
+local function setup_notification_handlers()
+    -- al/updateTests: capture the pushed test tree into the cache
+    local prev_update = vim.lsp.handlers["al/updateTests"]
+    vim.lsp.handlers["al/updateTests"] = function(err, result, ctx, config)
+        if result and result.testItems then
+            cache[ctx.client_id] = index_by_file(result.testItems)
+            fetch_in_progress[ctx.client_id] = nil  -- unblock any waiters
+        end
+        if prev_update then prev_update(err, result, ctx, config) end
+    end
 
-    local existing = vim.lsp.handlers["al/projectsLoadedNotification"]
+    -- al/projectsLoadedNotification: invalidate cache so next call re-fetches
+    local prev_loaded = vim.lsp.handlers["al/projectsLoadedNotification"]
     vim.lsp.handlers["al/projectsLoadedNotification"] = function(err, result, ctx, config)
         M.invalidate(ctx.client_id)
-        if existing then existing(err, result, ctx, config) end
+        if prev_loaded then prev_loaded(err, result, ctx, config) end
     end
 end
+
+-- Register immediately so we capture al/updateTests before discover_positions
+-- is ever called.
+setup_notification_handlers()
 
 -- ── Fetch from LSP ────────────────────────────────────────────────────────────
 
@@ -180,21 +198,28 @@ local function fetch_and_cache(client)
         return cache[client.id]
     end
 
+    -- Mark in-progress so concurrent callers wait instead of each firing their
+    -- own al/discoverTests request.
     fetch_in_progress[client.id] = true
+
+    -- Fire al/discoverTests to prompt the server to push al/updateTests.
+    -- The response is intentionally ignored (it will be empty); the real data
+    -- arrives via the al/updateTests handler registered at module load time,
+    -- which sets cache[client.id] and clears fetch_in_progress[client.id].
     local request = nio.wrap(function(cb)
         client:request("al/discoverTests", {}, cb)
     end, 1)
-    local err, result = request()
+    request()  -- response ignored
+
+    -- Wait up to 10 s for al/updateTests to populate the cache.
+    local ticks = 0
+    while fetch_in_progress[client.id] and ticks < 500 do  -- 500 × 20 ms = 10 s
+        nio.sleep(20)
+        ticks = ticks + 1
+    end
     fetch_in_progress[client.id] = nil
 
-    if err then
-        vim.notify(
-            "neotest-al: al/discoverTests failed: " .. vim.inspect(err),
-            vim.log.levels.ERROR
-        )
-        return {}
-    end
-    return index_by_file(result)
+    return cache[client.id] or {}
 end
 
 -- ── discover_positions ────────────────────────────────────────────────────────
@@ -203,8 +228,6 @@ end
 ---@param path string
 ---@return neotest.Tree|nil
 function M.discover_positions(path)
-    ensure_notification_handler()
-
     local client = find_client(path)
     if not client then return nil end
 
