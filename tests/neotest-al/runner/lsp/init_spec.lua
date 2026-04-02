@@ -2,12 +2,11 @@ describe("neotest-al.runner.lsp.init", function()
     local lsp_runner
 
     -- Stub sub-modules so tests are isolated
-    local stub_launch, stub_dirty, stub_run
+    local stub_launch, stub_run
 
     before_each(function()
         package.loaded["neotest-al.runner.lsp.init"]        = nil
         package.loaded["neotest-al.runner.lsp.launch"]      = nil
-        package.loaded["neotest-al.runner.lsp.dirty"]       = nil
         package.loaded["neotest-al.runner.lsp.run"]         = nil
         package.loaded["neotest-al.runner.lsp.diagnostics"] = nil
 
@@ -23,13 +22,8 @@ describe("neotest-al.runner.lsp.init", function()
             _read_json   = function() end,
             _config_cache = {},
         }
-        stub_dirty = {
-            is_dirty   = function() return true end,
-            mark_clean = function() end,
-            mark_dirty = function() end,
-        }
         stub_run = {
-            execute = function(client, config, items, path, skip)
+            execute = function(client, config, items, path)
                 -- Write a minimal results file
                 local f = io.open(path, "w")
                 f:write(vim.json.encode({ build_log = {}, build_errors = {}, tests = {
@@ -42,7 +36,6 @@ describe("neotest-al.runner.lsp.init", function()
         }
 
         package.loaded["neotest-al.runner.lsp.launch"]      = stub_launch
-        package.loaded["neotest-al.runner.lsp.dirty"]       = stub_dirty
         package.loaded["neotest-al.runner.lsp.run"]         = stub_run
         package.loaded["neotest-al.runner.lsp.diagnostics"] = { set = function() end, clear = function() end, parse_line = function() end }
 

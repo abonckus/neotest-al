@@ -82,9 +82,8 @@ local MAX_TICKS = 15000  -- 15000 × 20 ms = 300 s
 ---@param config       table     launch.json configuration object
 ---@param test_items   table[]   raw LSP test item objects for al/runTests
 ---@param results_path string    path to write JSON results file
----@param skip_publish boolean   passed as SkipPublish to al/runTests
 ---@return boolean  true when run completed with no build errors
-function M.execute(client, config, test_items, results_path, skip_publish, version)
+function M.execute(client, config, test_items, results_path, version)
     diagnostics.clear()
 
     local state = {
@@ -100,7 +99,7 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
     client:request("al/runTests", {
         configuration          = config,
         Tests                  = test_items,
-        SkipPublish            = skip_publish,
+        SkipPublish            = false,
         VSCodeExtensionVersion = version or "18.0.0",
         CoverageMode           = "none",
         Args                   = {},
