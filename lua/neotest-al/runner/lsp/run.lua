@@ -84,7 +84,7 @@ local MAX_TICKS = 15000  -- 15000 × 20 ms = 300 s
 ---@param results_path string    path to write JSON results file
 ---@param skip_publish boolean   passed as SkipPublish to al/runTests
 ---@return boolean  true when run completed with no build errors
-function M.execute(client, config, test_items, results_path, skip_publish)
+function M.execute(client, config, test_items, results_path, skip_publish, version)
     diagnostics.clear()
 
     local state = {
@@ -101,7 +101,7 @@ function M.execute(client, config, test_items, results_path, skip_publish)
         configuration          = config,
         Tests                  = test_items,
         SkipPublish            = skip_publish,
-        VSCodeExtensionVersion = "18.0.0",
+        VSCodeExtensionVersion = version or "18.0.0",
         CoverageMode           = "none",
         Args                   = {},
     }, function() end)

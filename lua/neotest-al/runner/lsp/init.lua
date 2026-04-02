@@ -86,7 +86,7 @@ function M.new(opts)
 
         -- Execute tests (blocks until al/testRunComplete or timeout)
         local results_path = vim.fn.tempname() .. ".json"
-        local success = run.execute(client, config, test_items, results_path, skip_publish)
+        local success = run.execute(client, config, test_items, results_path, skip_publish, opts.vscode_extension_version)
 
         -- Update dirty state
         if success and not skip_publish then
@@ -94,6 +94,7 @@ function M.new(opts)
         end
 
         return {
+            command = { vim.v.progpath, "--version" },
             context = {
                 results_path = results_path,
                 id_map       = id_map,
@@ -119,7 +120,12 @@ function M.new(opts)
             diagnostics.set(data.build_errors)
         end
 
-        local output  = table.concat(data.build_log or {}, "")
+        local output_path = vim.fn.tempname()
+        local outf = io.open(output_path, "w")
+        if outf then
+            outf:write(table.concat(data.build_log or {}, ""))
+            outf:close()
+        end
         local id_map  = spec.context.id_map or {}
         local neotest_results = {}
 
@@ -130,7 +136,7 @@ function M.new(opts)
                 neotest_results[d.id] = {
                     status = "failed",
                     short  = "Build failed — see diagnostics",
-                    output = output,
+                    output = output_path,
                 }
                 for _, child in ipairs(node:children() or {}) do
                     mark_failed(child)
@@ -149,7 +155,7 @@ function M.new(opts)
                 neotest_results[pos_id] = {
                     status   = STATUS[t.status] or "failed",
                     short    = t.message or "",
-                    output   = output,
+                    output   = output_path,
                     duration = t.duration,
                 }
             end
