@@ -5,11 +5,17 @@ local nio  = require("nio")
 local M = {}
 M.name = "lsp"
 
--- cache[client_id] = { [norm_file_path] = { codeunit_name, codeunit_id, tests[] } }
-local cache = {}
+-- raw_tree[client_id] = testItems array as pushed by al/updateTests (unprocessed).
+-- Processing is deferred until discover_positions/get_items is called for a
+-- specific file, so al/updateTests never blocks the UI regardless of project size.
+local raw_tree = {}
+
+-- cache[client_id][norm_path] = file_data  (lazily populated from raw_tree)
+-- A MISSING sentinel distinguishes "checked, no tests" from "not yet checked".
+local cache   = {}
+local MISSING = {}  -- sentinel: file is in the project but has no tests
 
 -- fetch_in_progress[client_id] = true while an al/discoverTests request is in flight.
--- Prevents N concurrent discover_positions calls from each sending a separate request.
 local fetch_in_progress = {}
 
 -- true once vim.lsp.rpc.Client.handle_body has been patched at the class level.
@@ -105,7 +111,7 @@ local function find_client(path)
     end
 end
 
--- ── Response indexing ─────────────────────────────────────────────────────────
+-- ── Per-file lazy extraction ──────────────────────────────────────────────────
 
 ---@param uri string  e.g. "file:///c:/..."
 ---@return string     normalized filesystem path
@@ -113,7 +119,9 @@ local function uri_to_path(uri)
     return vim.fs.normalize(vim.uri_to_fname(uri))
 end
 
----@param result table  raw al/discoverTests response (array of app nodes)
+-- Build the full file-indexed table from raw testItems — kept for tests and
+-- for the index_by_file export.  Not called on hot paths any more.
+---@param result table  raw testItems array
 ---@return table<string, {codeunit_name:string, codeunit_id:integer, tests:table[]}>
 local function index_by_file(result)
     local by_file = {}
@@ -137,13 +145,53 @@ local function index_by_file(result)
     return by_file
 end
 
+-- Extract file data for a single path from the raw tree, caching the result.
+-- This is the only place uri_to_path is called on a hot path, and it only
+-- runs when the user navigates to a test file — never on save.
+---@param client_id integer
+---@param norm_path string  normalized file path
+---@return {codeunit_name:string, codeunit_id:integer, tests:table[]}|nil
+local function find_for_path(client_id, norm_path)
+    if not cache[client_id] then cache[client_id] = {} end
+    if cache[client_id][norm_path] ~= nil then
+        local v = cache[client_id][norm_path]
+        return v ~= MISSING and v or nil
+    end
+
+    -- Extract from raw tree (scan once per file, result cached afterward)
+    local result = nil
+    for _, app in ipairs(raw_tree[client_id] or {}) do
+        for _, codeunit in ipairs(app.children or {}) do
+            for _, test in ipairs(codeunit.children or {}) do
+                if test.location and test.location.source then
+                    if uri_to_path(test.location.source) == norm_path then
+                        if not result then
+                            result = {
+                                codeunit_name = codeunit.name,
+                                codeunit_id   = codeunit.codeunitId,
+                                tests         = {},
+                            }
+                        end
+                        table.insert(result.tests, test)
+                    end
+                end
+            end
+        end
+    end
+
+    cache[client_id][norm_path] = result or MISSING
+    return result
+end
+
 -- ── Cache management ──────────────────────────────────────────────────────────
 
 ---@param client_id? integer  nil = clear all workspaces
 function M.invalidate(client_id)
     if client_id then
-        cache[client_id] = nil
+        raw_tree[client_id]  = nil
+        cache[client_id]     = nil
     else
+        raw_tree          = {}
         cache             = {}
         fetch_in_progress = {}
     end
@@ -151,32 +199,27 @@ end
 
 -- ── Notification handlers ─────────────────────────────────────────────────────
 --
--- The AL server uses a PUSH model for test data:
---   al/updateTests  – server pushes the full test tree whenever it changes
---   al/discoverTests – returns empty; calling it prompts the server to re-push
---
--- Both handlers are registered at MODULE LOAD TIME so we don't miss the first
--- al/updateTests notification that arrives before discover_positions is called.
+-- al/updateTests fires on every save for large projects.  We store the raw
+-- testItems unchanged (O(1)) and clear the per-file lazy cache so the next
+-- discover_positions call re-extracts from fresh data.  No uri_to_path calls
+-- happen here, so the save never blocks the UI.
 
 local function setup_notification_handlers()
-    -- al/updateTests: capture the pushed test tree into the cache.
-    -- index_by_file iterates every test item (uri_to_path per item) which
-    -- can be slow for large projects.  Defer the work so the LSP message
-    -- handler returns immediately and does not block the UI on save.
     local prev_update = vim.lsp.handlers["al/updateTests"]
     vim.lsp.handlers["al/updateTests"] = function(err, result, ctx, config)
         if result and result.testItems then
             local client_id = ctx.client_id
             local items     = result.testItems
             vim.schedule(function()
-                cache[client_id]             = index_by_file(items)
+                raw_tree[client_id]          = items
+                cache[client_id]             = nil  -- invalidate lazy per-file cache
                 fetch_in_progress[client_id] = nil  -- unblock any waiters
             end)
         end
         if prev_update then prev_update(err, result, ctx, config) end
     end
 
-    -- al/projectsLoadedNotification: invalidate cache so next call re-fetches
+    -- al/projectsLoadedNotification: invalidate so next call re-fetches
     local prev_loaded = vim.lsp.handlers["al/projectsLoadedNotification"]
     vim.lsp.handlers["al/projectsLoadedNotification"] = function(err, result, ctx, config)
         M.invalidate(ctx.client_id)
@@ -191,42 +234,29 @@ setup_notification_handlers()
 -- ── Fetch from LSP ────────────────────────────────────────────────────────────
 
 ---@param client vim.lsp.Client
----@return table<string, any>
 local function fetch_and_cache(client)
-    -- Belt-and-suspenders: patch now in case the eager path above hasn't fired yet.
     patch_rpc_class(client)
 
-    -- If another coroutine is already fetching for this client, wait for it to
-    -- finish rather than sending a duplicate al/discoverTests request.
     while fetch_in_progress[client.id] do
         nio.sleep(20)
     end
-    if cache[client.id] then
-        return cache[client.id]
-    end
+    if raw_tree[client.id] then return end
 
-    -- Mark in-progress so concurrent callers wait instead of each firing their
-    -- own al/discoverTests request.
     fetch_in_progress[client.id] = true
 
     -- Fire al/discoverTests to prompt the server to push al/updateTests.
-    -- The response is intentionally ignored (it will be empty); the real data
-    -- arrives via the al/updateTests handler registered at module load time,
-    -- which sets cache[client.id] and clears fetch_in_progress[client.id].
     local request = nio.wrap(function(cb)
         client:request("al/discoverTests", {}, cb)
     end, 1)
-    request()  -- response ignored
+    request()  -- response ignored; real data arrives via al/updateTests handler
 
-    -- Wait up to 10 s for al/updateTests to populate the cache.
+    -- Wait up to 10 s for al/updateTests to populate raw_tree.
     local ticks = 0
-    while fetch_in_progress[client.id] and ticks < 500 do  -- 500 × 20 ms = 10 s
+    while fetch_in_progress[client.id] and ticks < 500 do
         nio.sleep(20)
         ticks = ticks + 1
     end
     fetch_in_progress[client.id] = nil
-
-    return cache[client.id] or {}
 end
 
 -- ── discover_positions ────────────────────────────────────────────────────────
@@ -238,12 +268,14 @@ function M.discover_positions(path)
     local client = find_client(path)
     if not client then return nil end
 
-    if not cache[client.id] then
-        cache[client.id] = fetch_and_cache(client)
+    if not raw_tree[client.id] then
+        fetch_and_cache(client)
     end
 
+    if not raw_tree[client.id] then return nil end
+
     local norm      = vim.fs.normalize(path)
-    local file_data = cache[client.id][norm]
+    local file_data = find_for_path(client.id, norm)
     if not file_data or #file_data.tests == 0 then
         return nil
     end
@@ -277,16 +309,15 @@ end
 M._find_client   = find_client
 M._index_by_file = index_by_file
 
---- Returns the cached test entry for a file path, or nil if not in cache.
+--- Returns the test entry for a file path, extracting lazily from the raw tree.
 --- Used by the LSP runner to get raw LSP test items for al/runTests.
 ---@param path string  normalized filesystem path
 ---@return { codeunit_name: string, codeunit_id: integer, tests: table[] }|nil
 function M.get_items(path)
     local norm = vim.fs.normalize(path)
-    for _, file_cache in pairs(cache) do
-        if file_cache[norm] then
-            return file_cache[norm]
-        end
+    for client_id in pairs(raw_tree) do
+        local data = find_for_path(client_id, norm)
+        if data then return data end
     end
 end
 
