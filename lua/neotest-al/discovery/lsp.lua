@@ -18,6 +18,11 @@ local MISSING = {}  -- sentinel: file is in the project but has no tests
 -- fetch_in_progress[client_id] = true while an al/discoverTests request is in flight.
 local fetch_in_progress = {}
 
+-- test_file_set[client_id] = { [norm_path] = true }
+-- Rebuilt from raw_tree whenever raw_tree is updated.
+-- Used by is_test_file for O(1) lookup with no file I/O.
+local test_file_set = {}
+
 -- true once vim.lsp.rpc.Client.handle_body has been patched at the class level.
 local _class_patched = false
 
@@ -133,6 +138,28 @@ local function uri_to_path(uri)
     return norm(vim.uri_to_fname(uri))
 end
 
+-- Scan raw_tree[client_id] once and build a flat set of test file paths.
+-- Called every time raw_tree[client_id] is set or replaced so is_test_file
+-- stays current without any file I/O.
+local function build_test_file_set(client_id)
+    local items = raw_tree[client_id]
+    if not items then
+        test_file_set[client_id] = nil
+        return
+    end
+    local set = {}
+    for _, app in ipairs(items) do
+        for _, codeunit in ipairs(app.children or {}) do
+            for _, test in ipairs(codeunit.children or {}) do
+                if test.location and test.location.source then
+                    set[uri_to_path(test.location.source)] = true
+                end
+            end
+        end
+    end
+    test_file_set[client_id] = set
+end
+
 -- Build the full file-indexed table from raw testItems — kept for tests and
 -- for the index_by_file export.  Not called on hot paths any more.
 ---@param result table  raw testItems array
@@ -203,12 +230,14 @@ end
 ---@param client_id? integer  nil = clear all workspaces
 function M.invalidate(client_id)
     if client_id then
-        raw_tree[client_id]  = nil
-        cache[client_id]     = nil
+        raw_tree[client_id]      = nil
+        cache[client_id]         = nil
+        test_file_set[client_id] = nil
     else
         raw_tree          = {}
         cache             = {}
         fetch_in_progress = {}
+        test_file_set     = {}
     end
 end
 
@@ -229,6 +258,7 @@ local function setup_notification_handlers()
             vim.schedule(function()
                 raw_tree[client_id] = items
                 cache[client_id]    = nil  -- invalidate lazy per-file cache
+                build_test_file_set(client_id)
             end)
         end
         if prev_update then prev_update(err, result, ctx, config) end
@@ -250,6 +280,7 @@ local function setup_notification_handlers()
                     vim.schedule(function()
                         raw_tree[client_id] = response
                         cache[client_id]    = nil
+                        build_test_file_set(client_id)
                     end)
                 end
             end)
@@ -288,6 +319,7 @@ local function fetch_and_cache(client)
         if not err and type(result) == "table" and #result > 0 then
             raw_tree[client.id] = result
             cache[client.id]    = nil
+            build_test_file_set(client.id)
             break
         end
         nio.sleep(200)
@@ -346,10 +378,24 @@ function M.discover_positions(path)
     return Tree.from_list(pos_list, function(pos) return pos.id end)
 end
 
+--- Returns true if path is known to contain AL tests according to the LSP.
+--- Returns false when the LSP hasn't loaded yet (neotest will retry on next scan).
+--- No file I/O — O(1) lookup against the pre-built test_file_set.
+---@param path string
+---@return boolean
+function M.is_test_file(path)
+    local np = norm(path)
+    for _, file_set in pairs(test_file_set) do
+        if file_set[np] then return true end
+    end
+    return false
+end
+
 -- ── Test-only exports ─────────────────────────────────────────────────────────
 M._find_client   = find_client
 M._index_by_file = index_by_file
 M._norm          = norm
+M._test_file_set = test_file_set
 
 --- Returns the test entry for a file path, extracting lazily from the raw tree.
 --- Used by the LSP runner to get raw LSP test items for al/runTests.

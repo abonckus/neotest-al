@@ -506,4 +506,76 @@ describe("neotest-al.discovery.lsp", function()
             vim.lsp.get_clients = orig
         end)
     end)
+
+    -- ── is_test_file ──────────────────────────────────────────────────────────
+    describe("is_test_file", function()
+        -- Seed raw_tree + test_file_set via the al/updateTests handler.
+        -- The handler uses vim.schedule so we pump the event loop with vim.wait.
+        local function seed(client_id, uri)
+            vim.lsp.handlers["al/updateTests"](nil, {
+                testItems = {
+                    {
+                        name = "App",
+                        children = {
+                            {
+                                name       = "TestCU",
+                                codeunitId = 500,
+                                children   = {
+                                    {
+                                        name     = "Test_Foo",
+                                        location = {
+                                            source = uri,
+                                            range  = {
+                                                start   = { line = 1, character = 0 },
+                                                ["end"] = { line = 1, character = 8 },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }, { client_id = client_id }, nil)
+            vim.wait(200, function() return false end)
+        end
+
+        before_each(function() lsp.invalidate() end)
+
+        it("returns false when no LSP data is loaded", function()
+            assert.is_false(lsp.is_test_file("/workspace/File.al"))
+        end)
+
+        it("returns true for a path that has tests", function()
+            local uri   = "file:///workspace/TestCU.al"
+            local fpath = lsp._norm(vim.uri_to_fname(uri))
+            seed(400, uri)
+            assert.is_true(lsp.is_test_file(fpath))
+            lsp.invalidate(400)
+        end)
+
+        it("returns false for a path with no tests", function()
+            local uri   = "file:///workspace/TestCU.al"
+            seed(401, uri)
+            local other = lsp._norm(vim.uri_to_fname("file:///workspace/Other.al"))
+            assert.is_false(lsp.is_test_file(other))
+            lsp.invalidate(401)
+        end)
+
+        it("returns false after the client is invalidated", function()
+            local uri   = "file:///workspace/TestCU.al"
+            local fpath = lsp._norm(vim.uri_to_fname(uri))
+            seed(402, uri)
+            lsp.invalidate(402)
+            assert.is_false(lsp.is_test_file(fpath))
+        end)
+
+        it("returns false after invalidate() with no args", function()
+            local uri   = "file:///workspace/TestCU.al"
+            local fpath = lsp._norm(vim.uri_to_fname(uri))
+            seed(403, uri)
+            lsp.invalidate()
+            assert.is_false(lsp.is_test_file(fpath))
+        end)
+    end)
 end)
