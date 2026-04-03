@@ -243,50 +243,23 @@ end
 -- directly; al/updateTests just keeps the cache current between explicit calls.
 -- No uri_to_path calls happen here, so the notification never blocks the UI.
 
--- Poll al/hasProjectClosureLoadedRequest until the project closure is loaded,
--- then call al/discoverTests and populate raw_tree + test_file_set.
--- Uses vim.defer_fn so it works outside a coroutine (notification handlers, LspAttach).
--- max_polls × 2 s = 10 s default timeout.
-local function discover_when_ready(client, client_id, max_polls, poll_count)
-    max_polls  = max_polls  or 5  -- 5 × 2 s = 10 s
-    poll_count = poll_count or 0
+-- Call al/discoverTests immediately and populate raw_tree + test_file_set.
+-- Guard prevents concurrent callers (LspAttach + al/activeProjectLoaded) from doubling up.
+local function discover_when_ready(client, client_id)
+    if discover_in_progress[client_id] then return end
+    if raw_tree[client_id] then return end
+    discover_in_progress[client_id] = true
 
-    -- First call: claim the slot; subsequent recursive calls own it already.
-    if poll_count == 0 then
-        if discover_in_progress[client_id] then return end  -- another caller is already polling
-        if raw_tree[client_id] then return end              -- already populated
-        discover_in_progress[client_id] = true
-    end
-
-    if poll_count >= max_polls then
+    client:request("al/discoverTests", {}, function(req_err, response)
         discover_in_progress[client_id] = nil
-        return
-    end
-
-    local workspace_path = vim.fs.normalize(client.root_dir or "")
-    if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
-        workspace_path = workspace_path:gsub("/", "\\")
-    end
-
-    client:request("al/hasProjectClosureLoadedRequest", { workspacePath = workspace_path },
-        function(err, result)
-            if not err and result and result.loaded then
-                client:request("al/discoverTests", {}, function(req_err, response)
-                    discover_in_progress[client_id] = nil
-                    if not req_err and type(response) == "table" and #response > 0 then
-                        vim.schedule(function()
-                            raw_tree[client_id] = response
-                            cache[client_id]    = nil
-                            build_test_file_set(client_id)
-                        end)
-                    end
-                end)
-            else
-                vim.defer_fn(function()
-                    discover_when_ready(client, client_id, max_polls, poll_count + 1)
-                end, 2000)
-            end
-        end)
+        if not req_err and type(response) == "table" and #response > 0 then
+            vim.schedule(function()
+                raw_tree[client_id] = response
+                cache[client_id]    = nil
+                build_test_file_set(client_id)
+            end)
+        end
+    end)
 end
 
 local function setup_notification_handlers()
@@ -334,16 +307,15 @@ local function setup_notification_handlers()
         if prev_active then prev_active(err, result, ctx, config) end
     end
 
-    -- Apply patch + start polling when an al_ls client attaches.
-    -- discover_when_ready waits for the project closure before calling al/discoverTests,
-    -- populating raw_tree and test_file_set before neotest's first is_test_file scan.
+    -- Apply the handle_body patch when an al_ls client attaches.
+    -- Discovery is triggered by al/activeProjectLoaded or al/projectsLoadedNotification
+    -- once the project closure is actually ready.
     vim.api.nvim_create_autocmd("LspAttach", {
         group = vim.api.nvim_create_augroup("neotest_al_lsp_patch", { clear = true }),
         callback = function(args)
             local c = vim.lsp.get_client_by_id(args.data.client_id)
             if c and c.name == "al_ls" then
                 patch_rpc_class(c)
-                discover_when_ready(c, c.id)
             end
         end,
     })
