@@ -96,7 +96,8 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
     }
     active_runs[client.id] = state
 
-    -- Fire al/runTests (response has no value; we wait for al/testRunComplete)
+    -- Fire al/runTests and check the response for immediate errors (e.g. 401 auth failure).
+    -- A successful run has no meaningful result value; we wait for al/testRunComplete instead.
     client:request("al/runTests", {
         configuration          = config,
         Tests                  = test_items,
@@ -104,7 +105,14 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
         VSCodeExtensionVersion = version or "18.0.0",
         CoverageMode           = "none",
         Args                   = {},
-    }, function() end)
+    }, function(err)
+        if err then
+            if type(err) == "table" and err.data == 401 then
+                state.auth_error = true
+            end
+            state.done = true
+        end
+    end)
 
     -- Wait for al/testRunComplete (or bail early on auth error — server may
     -- never send al/testRunComplete when authentication fails).
