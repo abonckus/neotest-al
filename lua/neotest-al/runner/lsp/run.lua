@@ -98,14 +98,15 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
         build_errors = {},
         tests        = {},
         auth_error   = false,
+        got_401      = false,   -- set when al/runTests response carries a 401 error
     }
     active_runs[client.id] = state
 
     -- Fire al/runTests.
-    -- Only treat a 401 error response as an immediate auth failure — for that case
-    -- the server never sends al/testRunComplete, so we must exit the wait loop early.
-    -- All other errors (e.g. publish/compile failures) arrive via al/testExecutionMessage
-    -- notifications and are followed by al/testRunComplete; do not short-circuit those.
+    -- The server returns a 401 error response both for genuine auth failures AND for
+    -- some publish/compile failures.  We cannot declare auth failure from the response
+    -- alone — instead we set got_401 and watch for al/testExecutionMessage activity.
+    -- If no activity arrives within ~5 s the request was truly rejected, not just failed.
     client:request("al/runTests", {
         configuration          = config,
         Tests                  = test_items,
@@ -115,17 +116,26 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
         Args                   = {},
     }, function(err)
         if err and type(err) == "table" and err.data == 401 then
-            state.auth_error = true
-            state.done = true
+            state.got_401 = true
         end
     end)
 
-    -- Wait for al/testRunComplete (or bail early on auth error — server may
-    -- never send al/testRunComplete when authentication fails).
+    -- Ticks at which we declare auth failure if got_401 and no messages arrived.
+    -- 250 × 20 ms = 5 s — long enough for publish-failure notifications to arrive,
+    -- short enough to give fast feedback when truly unauthenticated.
+    local AUTH_TIMEOUT_TICKS = 250
+
+    -- Wait for al/testRunComplete (or bail early on auth error).
     local ticks = 0
     while not state.done and not state.auth_error and ticks < MAX_TICKS do
         nio.sleep(20)
         ticks = ticks + 1
+        -- If the server returned 401 but no al/testExecutionMessage has arrived
+        -- within 5 s, this is a genuine auth rejection (the server won't send
+        -- al/testRunComplete). Declare auth failure and exit.
+        if state.got_401 and #state.build_log == 0 and ticks >= AUTH_TIMEOUT_TICKS then
+            state.auth_error = true
+        end
     end
 
     active_runs[client.id] = nil
