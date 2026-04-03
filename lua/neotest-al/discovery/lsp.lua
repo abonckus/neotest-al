@@ -277,21 +277,14 @@ local function setup_notification_handlers()
         if prev_update then prev_update(err, result, ctx, config) end
     end
 
-    -- al/projectsLoadedNotification: invalidate cache, then immediately fire
-    -- al/discoverTests — this is the reactive call VSCode makes on every notification.
-    -- The response is a plain array (not wrapped in testItems like al/updateTests).
-    -- Only store it if non-empty; an empty response means the server isn't ready yet
-    -- and al/updateTests will arrive on its own.
-    -- al/projectsLoadedNotification: older AL LSP versions fire this when the
-    -- project closure finishes loading. Invalidate cache then discover.
+    -- al/projectsLoadedNotification fires once per dependency as the server loads
+    -- each workspace (can fire ~30+ times during a multi-project load).  Only
+    -- invalidate the cache here — do NOT trigger discovery, because the project
+    -- closure is not necessarily fully built yet.  al/activeProjectLoaded fires
+    -- once when everything is ready and is the correct trigger for al/discoverTests.
     local prev_loaded = vim.lsp.handlers["al/projectsLoadedNotification"]
     vim.lsp.handlers["al/projectsLoadedNotification"] = function(err, result, ctx, config)
-        local client_id = ctx.client_id
-        M.invalidate(client_id)
-        local client = vim.lsp.get_client_by_id(client_id)
-        if client then
-            discover_when_ready(client, client_id)
-        end
+        M.invalidate(ctx.client_id)
         if prev_loaded then prev_loaded(err, result, ctx, config) end
     end
 
