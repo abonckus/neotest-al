@@ -106,9 +106,10 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
         Args                   = {},
     }, function() end)
 
-    -- Wait for al/testRunComplete
+    -- Wait for al/testRunComplete (or bail early on auth error — server may
+    -- never send al/testRunComplete when authentication fails).
     local ticks = 0
-    while not state.done and ticks < MAX_TICKS do
+    while not state.done and not state.auth_error and ticks < MAX_TICKS do
         nio.sleep(20)
         ticks = ticks + 1
     end
