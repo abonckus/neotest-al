@@ -18,6 +18,10 @@ local MISSING = {}  -- sentinel: file is in the project but has no tests
 -- fetch_in_progress[client_id] = true while an al/discoverTests request is in flight.
 local fetch_in_progress = {}
 
+-- discover_in_progress[client_id] = true while discover_when_ready is polling.
+-- Prevents concurrent callers (LspAttach + al/activeProjectLoaded) from doubling up.
+local discover_in_progress = {}
+
 -- test_file_set[client_id] = { [norm_path] = true }
 -- Rebuilt from raw_tree whenever raw_tree is updated.
 -- Used by is_test_file for O(1) lookup with no file I/O.
@@ -218,14 +222,16 @@ end
 ---@param client_id? integer  nil = clear all workspaces
 function M.invalidate(client_id)
     if client_id then
-        raw_tree[client_id]      = nil
-        cache[client_id]         = nil
-        test_file_set[client_id] = nil
+        raw_tree[client_id]             = nil
+        cache[client_id]                = nil
+        test_file_set[client_id]        = nil
+        discover_in_progress[client_id] = nil
     else
-        raw_tree          = {}
-        cache             = {}
-        fetch_in_progress = {}
-        test_file_set     = {}
+        raw_tree             = {}
+        cache                = {}
+        fetch_in_progress    = {}
+        test_file_set        = {}
+        discover_in_progress = {}
     end
 end
 
@@ -244,8 +250,18 @@ end
 local function discover_when_ready(client, client_id, max_polls, poll_count)
     max_polls  = max_polls  or 150
     poll_count = poll_count or 0
-    if poll_count >= max_polls then return end
-    if raw_tree[client_id] then return end  -- already populated by a concurrent caller
+
+    -- First call: claim the slot; subsequent recursive calls own it already.
+    if poll_count == 0 then
+        if discover_in_progress[client_id] then return end  -- another caller is already polling
+        if raw_tree[client_id] then return end              -- already populated
+        discover_in_progress[client_id] = true
+    end
+
+    if poll_count >= max_polls then
+        discover_in_progress[client_id] = nil
+        return
+    end
 
     local workspace_path = vim.fs.normalize(client.root_dir or "")
     if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
@@ -256,6 +272,7 @@ local function discover_when_ready(client, client_id, max_polls, poll_count)
         function(err, result)
             if not err and result and result.loaded then
                 client:request("al/discoverTests", {}, function(req_err, response)
+                    discover_in_progress[client_id] = nil
                     if not req_err and type(response) == "table" and #response > 0 then
                         vim.schedule(function()
                             raw_tree[client_id] = response
