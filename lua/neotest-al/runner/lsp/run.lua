@@ -34,9 +34,14 @@ local function setup_handlers()
             if is_auth_error(result) then
                 state.auth_error = true
             end
-            local err_item = diagnostics.parse_line(result)
-            if err_item then
-                table.insert(state.build_errors, err_item)
+            -- The server sometimes sends a multi-line blob in a single notification
+            -- (e.g. a full publish-failure response). Split by line so parse_line
+            -- can match individual compiler diagnostics embedded in the message.
+            for line in result:gmatch("[^\r\n]+") do
+                local err_item = diagnostics.parse_line(line)
+                if err_item then
+                    table.insert(state.build_errors, err_item)
+                end
             end
         end
         if prev_msg then prev_msg(err, result, ctx, config) end
@@ -96,8 +101,11 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
     }
     active_runs[client.id] = state
 
-    -- Fire al/runTests and check the response for immediate errors (e.g. 401 auth failure).
-    -- A successful run has no meaningful result value; we wait for al/testRunComplete instead.
+    -- Fire al/runTests.
+    -- Only treat a 401 error response as an immediate auth failure — for that case
+    -- the server never sends al/testRunComplete, so we must exit the wait loop early.
+    -- All other errors (e.g. publish/compile failures) arrive via al/testExecutionMessage
+    -- notifications and are followed by al/testRunComplete; do not short-circuit those.
     client:request("al/runTests", {
         configuration          = config,
         Tests                  = test_items,
@@ -106,10 +114,8 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
         CoverageMode           = "none",
         Args                   = {},
     }, function(err)
-        if err then
-            if type(err) == "table" and err.data == 401 then
-                state.auth_error = true
-            end
+        if err and type(err) == "table" and err.data == 401 then
+            state.auth_error = true
             state.done = true
         end
     end)
