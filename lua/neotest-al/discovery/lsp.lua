@@ -246,9 +246,9 @@ end
 -- Poll al/hasProjectClosureLoadedRequest until the project closure is loaded,
 -- then call al/discoverTests and populate raw_tree + test_file_set.
 -- Uses vim.defer_fn so it works outside a coroutine (notification handlers, LspAttach).
--- max_polls × 200 ms = 30 s default timeout (matches the runner's behaviour).
+-- max_polls × 2 s = 5 min default timeout.
 local function discover_when_ready(client, client_id, max_polls, poll_count)
-    max_polls  = max_polls  or 150
+    max_polls  = max_polls  or 150  -- 150 × 2 s = 5 min
     poll_count = poll_count or 0
 
     -- First call: claim the slot; subsequent recursive calls own it already.
@@ -284,7 +284,7 @@ local function discover_when_ready(client, client_id, max_polls, poll_count)
             else
                 vim.defer_fn(function()
                     discover_when_ready(client, client_id, max_polls, poll_count + 1)
-                end, 200)
+                end, 2000)
             end
         end)
 end
