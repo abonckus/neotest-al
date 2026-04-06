@@ -59,7 +59,7 @@ local function wait_for_project_closure(client, workspace_root, max_polls)
         client:request("al/hasProjectClosureLoadedRequest", { workspacePath = path }, cb)
     end, 1)
 
-    for poll = 1, max_polls do
+    for _ = 1, max_polls do
         local err, result = request()
         if not err and result and result.loaded then
             return true
@@ -160,7 +160,7 @@ function M.new(opts)
     ---@param result neotest.StrategyResult
     ---@param tree neotest.Tree
     ---@return table<string, neotest.Result>
-    function runner.results(spec, result, tree)
+    function runner.results(spec, _result, tree)
         local f = io.open(spec.context.results_path, "r")
         if not f then
             return {}
@@ -239,10 +239,10 @@ function M.new(opts)
         local neotest_results = {}
 
         -- Helper: mark every node in the tree with the same result
-        local function mark_all(node, result)
-            neotest_results[node:data().id] = result
+        local function mark_all(node, res)
+            neotest_results[node:data().id] = res
             for _, child in ipairs(node:children() or {}) do
-                mark_all(child, result)
+                mark_all(child, res)
             end
         end
 

@@ -429,7 +429,7 @@ local function fetch_and_cache(client)
     local request = nio.wrap(function(cb)
         client:request("al/discoverTests", {}, cb)
     end, 1)
-    for attempt = 1, 50 do
+    for _ = 1, 50 do
         if raw_tree[client.id] then
             break -- al/updateTests beat us to it
         end

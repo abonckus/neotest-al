@@ -1,5 +1,4 @@
 local lib = require("neotest.lib")
-local base = require("neotest-al.base")
 
 ---@param config? { discovery?: neotest-al.Discovery, runner?: neotest-al.Runner }
 ---@return neotest.Adapter
