@@ -350,7 +350,7 @@ describe("neotest-al.discovery.lsp", function()
             assert.are.equal(2, call_count)
         end)
 
-        it("fires al/discoverTests immediately on al/projectsLoadedNotification", function()
+        it("fires al/discoverTests immediately on al/activeProjectLoaded", function()
             local requests_fired = {}
             local mock_client = {
                 id       = 510,
@@ -366,9 +366,9 @@ describe("neotest-al.discovery.lsp", function()
                 if id == 510 then return mock_client end
             end
 
-            local handler = vim.lsp.handlers["al/projectsLoadedNotification"]
+            local handler = vim.lsp.handlers["al/activeProjectLoaded"]
             assert.is_not_nil(handler, "handler must be registered")
-            handler(nil, { projects = {} }, { client_id = 510 }, nil)
+            handler(nil, {}, { client_id = 510 }, nil)
 
             vim.wait(1000, function() return #requests_fired > 0 end, 10)
 
@@ -379,7 +379,7 @@ describe("neotest-al.discovery.lsp", function()
                 "expected al/discoverTests to be fired")
         end)
 
-        it("populates raw_tree from al/discoverTests response on al/projectsLoadedNotification", function()
+        it("populates raw_tree from al/discoverTests response on al/activeProjectLoaded", function()
             local uri = "file:///workspace/ReactiveTest.al"
             local response = {
                 {
@@ -420,8 +420,8 @@ describe("neotest-al.discovery.lsp", function()
                 if id == 511 then return mock_client end
             end
 
-            local handler = vim.lsp.handlers["al/projectsLoadedNotification"]
-            handler(nil, { projects = {} }, { client_id = 511 }, nil)
+            local handler = vim.lsp.handlers["al/activeProjectLoaded"]
+            handler(nil, {}, { client_id = 511 }, nil)
 
             local fpath = lsp._norm(vim.uri_to_fname(uri))
             vim.wait(1000, function() return lsp.get_items(fpath) ~= nil end, 10)
