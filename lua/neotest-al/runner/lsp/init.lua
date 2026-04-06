@@ -7,19 +7,45 @@ local diagnostics = require("neotest-al.runner.lsp.diagnostics")
 local M = {}
 M.name = "lsp"
 
+local IS_WINDOWS = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
+
+--- Find the al_ls client whose root_dir is a prefix of path.
+---@param path string
+---@return vim.lsp.Client|nil
+local function find_al_client(path)
+    local np = vim.fs.normalize(path)
+    if IS_WINDOWS then np = np:lower() end
+    for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
+        local root = vim.fs.normalize(client.root_dir or "")
+        if IS_WINDOWS then root = root:lower() end
+        if vim.startswith(np, root .. "/") or np == root then
+            return client
+        end
+    end
+end
+
 -- Recursively walk a neotest Tree and collect raw LSP test items + position id_map.
 -- Returns items[], id_map where id_map["codeunit_id:test_name"] = position_id.
+-- Per-file caching avoids calling discovery.get_items multiple times for the
+-- same file when a tree contains many tests from the same codeunit.
 ---@param tree neotest.Tree
 ---@param discovery neotest-al.Discovery
 ---@return table[], table<string, string>
 local function collect_items(tree, discovery)
-    local items = {}
-    local id_map = {}
+    local items      = {}
+    local id_map     = {}
+    local file_cache = {} -- path -> file_data|false
 
     local function traverse(node)
         local data = node:data()
         if data.type == "test" then
-            local file_data = discovery.get_items(data.path)
+            local cached = file_cache[data.path]
+            if cached == nil then
+                local result = discovery.get_items(data.path)
+                cached = result or false
+                file_cache[data.path] = cached
+            end
+            local file_data = cached ~= false and cached or nil
             if file_data then
                 for _, raw in ipairs(file_data.tests or {}) do
                     if raw.name == data.name then
@@ -78,19 +104,10 @@ function M.new(opts)
 
     ---@async
     function runner.build_spec(args, discovery)
-        -- Require the LSP discovery's get_items / get_client extensions
-        if type(discovery.get_items) ~= "function" or type(discovery.get_client) ~= "function" then
-            vim.notify(
-                "neotest-al: LSP runner requires LSP discovery (discovery.get_items not found)",
-                vim.log.levels.ERROR
-            )
-            return nil
-        end
-
         local position = args.tree:data()
 
-        -- Find the client for this workspace
-        local client = discovery.get_client(position.path)
+        -- Find the al_ls client for this workspace
+        local client = find_al_client(position.path)
         if not client then
             vim.notify(
                 "neotest-al: no AL LSP client found for " .. tostring(position.path),
