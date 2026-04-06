@@ -7,9 +7,9 @@ local M = {}
 ---@return string|nil  normalized workspace root path
 local function find_workspace_root(path)
     local found = vim.fs.find("app.json", {
-        path   = vim.fs.dirname(vim.fs.normalize(path)),
+        path = vim.fs.dirname(vim.fs.normalize(path)),
         upward = true,
-        limit  = 1,
+        limit = 1,
     })
     if found and #found > 0 then
         return vim.fs.normalize(vim.fs.dirname(found[1]))
@@ -21,24 +21,30 @@ end
 ---@return table|nil
 local function read_json(path)
     local f = io.open(path, "r")
-    if not f then return nil end
+    if not f then
+        return nil
+    end
     local content = f:read("*a")
     f:close()
     local ok, data = pcall(vim.json.decode, content)
-    if ok and type(data) == "table" then return data end
+    if ok and type(data) == "table" then
+        return data
+    end
 end
 
 -- Per-workspace selected config cache.
 -- Invalidated when launch.json changes on disk.
 local config_cache = {}
-local watching     = {}
+local watching = {}
 
 local function watch_launch_json(launch_path, root)
     local norm = vim.fs.normalize(launch_path)
-    if watching[norm] then return end
+    if watching[norm] then
+        return
+    end
     watching[norm] = true
     vim.api.nvim_create_autocmd("BufWritePost", {
-        pattern  = norm,
+        pattern = norm,
         callback = function()
             config_cache[root] = nil
         end,
@@ -117,11 +123,15 @@ function M.get_config(file_path, opts)
     -- Multiple configs: prompt user via vim.ui.select (async)
     local select = nio.wrap(vim.ui.select, 3)
     local choice = select(al_configs, {
-        prompt      = "Select AL launch configuration:",
-        format_item = function(cfg) return cfg.name or "(unnamed)" end,
+        prompt = "Select AL launch configuration:",
+        format_item = function(cfg)
+            return cfg.name or "(unnamed)"
+        end,
     })
 
-    if not choice then return nil end
+    if not choice then
+        return nil
+    end
 
     config_cache[root] = choice
     return choice
@@ -129,7 +139,7 @@ end
 
 -- Test-only exports
 M._find_workspace_root = find_workspace_root
-M._read_json           = read_json
-M._config_cache        = config_cache
+M._read_json = read_json
+M._config_cache = config_cache
 
 return M

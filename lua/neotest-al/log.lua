@@ -13,12 +13,18 @@ local M = {}
 local _f = nil
 
 local function get_file()
-    if _f then return _f end
-    local ok, dir = pcall(function() return vim.fn.stdpath("cache") end)
+    if _f then
+        return _f
+    end
+    local ok, dir = pcall(function()
+        return vim.fn.stdpath("cache")
+    end)
     local log_path = (ok and dir or "/tmp") .. "/neotest-al-debug.log"
     _f = io.open(log_path, "a")
     if _f then
-        _f:write("\n" .. os.date("[%Y-%m-%d %H:%M:%S]") .. " ===== neotest-al session start =====\n")
+        _f:write(
+            "\n" .. os.date("[%Y-%m-%d %H:%M:%S]") .. " ===== neotest-al session start =====\n"
+        )
         _f:flush()
     end
     return _f

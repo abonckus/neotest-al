@@ -1,7 +1,7 @@
-local nio         = require("nio")
-local launch      = require("neotest-al.runner.lsp.launch")
-local dirty       = require("neotest-al.runner.lsp.dirty")
-local run         = require("neotest-al.runner.lsp.run")
+local nio = require("nio")
+local launch = require("neotest-al.runner.lsp.launch")
+local dirty = require("neotest-al.runner.lsp.dirty")
+local run = require("neotest-al.runner.lsp.run")
 local diagnostics = require("neotest-al.runner.lsp.diagnostics")
 
 local M = {}
@@ -13,7 +13,7 @@ M.name = "lsp"
 ---@param discovery neotest-al.Discovery
 ---@return table[], table<string, string>
 local function collect_items(tree, discovery)
-    local items  = {}
+    local items = {}
     local id_map = {}
 
     local function traverse(node)
@@ -118,18 +118,29 @@ function M.new(opts)
         end
 
         -- Get launch configuration (may prompt with vim.ui.select)
-        local config = launch.get_config(position.path, { launch_json_path = opts.launch_json_path })
-        if not config then return nil end
+        local config =
+            launch.get_config(position.path, { launch_json_path = opts.launch_json_path })
+        if not config then
+            return nil
+        end
 
         -- Determine SkipPublish from dirty state
         local skip_publish = not dirty.is_dirty(workspace_root)
 
         -- Execute tests (blocks until al/testRunComplete or timeout)
         local results_path = vim.fn.tempname() .. ".json"
-        local success = run.execute(client, config, test_items, results_path, skip_publish, opts.vscode_extension_version, {
-            max_ticks          = opts.max_ticks,
-            auth_timeout_ticks = opts.auth_timeout_ticks,
-        })
+        local success = run.execute(
+            client,
+            config,
+            test_items,
+            results_path,
+            skip_publish,
+            opts.vscode_extension_version,
+            {
+                max_ticks = opts.max_ticks,
+                auth_timeout_ticks = opts.auth_timeout_ticks,
+            }
+        )
 
         -- Update dirty state
         if success and not skip_publish then
@@ -140,7 +151,7 @@ function M.new(opts)
             command = { vim.v.progpath, "--version" },
             context = {
                 results_path = results_path,
-                id_map       = id_map,
+                id_map = id_map,
             },
         }
     end
@@ -151,12 +162,16 @@ function M.new(opts)
     ---@return table<string, neotest.Result>
     function runner.results(spec, result, tree)
         local f = io.open(spec.context.results_path, "r")
-        if not f then return {} end
+        if not f then
+            return {}
+        end
         local content = f:read("*a")
         f:close()
 
         local ok, data = pcall(vim.json.decode, content)
-        if not ok or not data then return {} end
+        if not ok or not data then
+            return {}
+        end
 
         -- Set vim diagnostics from build errors
         if data.build_errors and #data.build_errors > 0 then
@@ -168,13 +183,13 @@ function M.new(opts)
         if outf then
             -- ANSI colour helpers
             local C = {
-                reset   = "\27[0m",
-                bold    = "\27[1m",
-                dim     = "\27[2m",
-                red     = "\27[31m",
-                green   = "\27[32m",
-                yellow  = "\27[33m",
-                cyan    = "\27[36m",
+                reset = "\27[0m",
+                bold = "\27[1m",
+                dim = "\27[2m",
+                red = "\27[31m",
+                green = "\27[32m",
+                yellow = "\27[33m",
+                cyan = "\27[36m",
             }
 
             -- Build log -------------------------------------------------------
@@ -200,15 +215,17 @@ function M.new(opts)
             -- Test results ----------------------------------------------------
             if data.tests and #data.tests > 0 then
                 local STATUS_FMT = {
-                    [0] = C.green  .. "✓" .. C.reset,
-                    [1] = C.red    .. "✗" .. C.reset,
+                    [0] = C.green .. "✓" .. C.reset,
+                    [1] = C.red .. "✗" .. C.reset,
                     [2] = C.yellow .. "⊘" .. C.reset,
                 }
                 outf:write("\n\n" .. C.bold .. "Test Results:" .. C.reset .. "\n")
                 for _, t in ipairs(data.tests) do
-                    local icon     = STATUS_FMT[t.status] or "?"
-                    local name     = t.status == 1 and (C.red .. t.name .. C.reset) or t.name
-                    local duration = t.duration and (C.dim .. " (" .. t.duration .. "ms)" .. C.reset) or ""
+                    local icon = STATUS_FMT[t.status] or "?"
+                    local name = t.status == 1 and (C.red .. t.name .. C.reset) or t.name
+                    local duration = t.duration
+                            and (C.dim .. " (" .. t.duration .. "ms)" .. C.reset)
+                        or ""
                     outf:write(("  %s %s%s\n"):format(icon, name, duration))
                     if t.message and t.message ~= "" then
                         outf:write(("    " .. C.red .. t.message .. C.reset .. "\n"))
@@ -218,7 +235,7 @@ function M.new(opts)
 
             outf:close()
         end
-        local id_map  = spec.context.id_map or {}
+        local id_map = spec.context.id_map or {}
         local neotest_results = {}
 
         -- Helper: mark every node in the tree with the same result
@@ -233,7 +250,7 @@ function M.new(opts)
         if data.auth_error and #(data.tests or {}) == 0 then
             mark_all(tree, {
                 status = "skipped",
-                short  = "Authentication failed — run :AL authenticate",
+                short = "Authentication failed — run :AL authenticate",
                 output = output_path,
             })
             return neotest_results
@@ -243,7 +260,7 @@ function M.new(opts)
         if #(data.build_errors or {}) > 0 and #(data.tests or {}) == 0 then
             mark_all(tree, {
                 status = "skipped",
-                short  = "Build failed — see diagnostics",
+                short = "Build failed — see diagnostics",
                 output = output_path,
             })
             return neotest_results
@@ -252,13 +269,13 @@ function M.new(opts)
         -- Map individual test results
         local STATUS = { [0] = "passed", [1] = "failed", [2] = "skipped" }
         for _, t in ipairs(data.tests or {}) do
-            local key    = tostring(t.codeunit_id) .. ":" .. t.name
+            local key = tostring(t.codeunit_id) .. ":" .. t.name
             local pos_id = id_map[key]
             if pos_id then
                 neotest_results[pos_id] = {
-                    status   = STATUS[t.status] or "failed",
-                    short    = t.message or "",
-                    output   = output_path,
+                    status = STATUS[t.status] or "failed",
+                    short = t.message or "",
+                    output = output_path,
                     duration = t.duration,
                 }
             end

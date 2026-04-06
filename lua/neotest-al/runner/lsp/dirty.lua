@@ -2,7 +2,7 @@ local M = {}
 
 -- dirty[root] = true  → files have been saved since last publish
 -- published[root] = true  → at least one successful publish has occurred
-local dirty     = {}
+local dirty = {}
 local published = {}
 
 --- Returns true if the workspace has unsaved changes since last publish,
@@ -22,7 +22,7 @@ end
 --- Mark workspace as clean (successful publish just completed).
 ---@param root string
 function M.mark_clean(root)
-    dirty[root]     = nil
+    dirty[root] = nil
     published[root] = true
 end
 
@@ -37,11 +37,13 @@ end
 -- dirty by default (is_dirty returns true for never-published roots), so
 -- missing a pre-run save is harmless.
 vim.api.nvim_create_autocmd("BufWritePost", {
-    group   = vim.api.nvim_create_augroup("neotest_al_dirty_tracker", { clear = true }),
+    group = vim.api.nvim_create_augroup("neotest_al_dirty_tracker", { clear = true }),
     pattern = "*.al",
     callback = function(args)
         local file_path = args.match or args.file
-        if not file_path then return end
+        if not file_path then
+            return
+        end
         local norm = vim.fs.normalize(file_path)
         -- Find a known root that is a prefix of this file path.
         local matched = false

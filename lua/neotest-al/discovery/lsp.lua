@@ -1,5 +1,5 @@
 local Tree = require("neotest.types").Tree
-local nio  = require("nio")
+local nio = require("nio")
 
 -- ── Windows path normalisation for Tree lookups ───────────────────────────────
 --
@@ -17,15 +17,21 @@ do
         local orig = Tree.get_key
         Tree.get_key = function(self, key)
             local v = orig(self, key)
-            if v ~= nil then return v end
-            if type(key) ~= "string" then return nil end
+            if v ~= nil then
+                return v
+            end
+            if type(key) ~= "string" then
+                return nil
+            end
 
             -- Fast path: try pure-backslash version (covers the common case where
             -- neotest looks up a forward-slash path against our backslash file keys).
             local bs_key = key:gsub("/", "\\")
             if bs_key ~= key then
                 v = orig(self, bs_key)
-                if v ~= nil then return v end
+                if v ~= nil then
+                    return v
+                end
             end
 
             -- Normalised key for the remaining two fallbacks.
@@ -64,8 +70,8 @@ local raw_tree = {}
 
 -- cache[client_id][norm_path] = file_data  (lazily populated from raw_tree)
 -- A MISSING sentinel distinguishes "checked, no tests" from "not yet checked".
-local cache   = {}
-local MISSING = {}  -- sentinel: file is in the project but has no tests
+local cache = {}
+local MISSING = {} -- sentinel: file is in the project but has no tests
 
 -- fetch_in_progress[client_id] = true while an al/discoverTests request is in flight.
 local fetch_in_progress = {}
@@ -99,26 +105,40 @@ local _class_patched = false
 ---@return table|nil
 local function get_rpc_client(lsp_client)
     local fn = lsp_client.rpc and lsp_client.rpc.request
-    if type(fn) ~= "function" then return nil end
+    if type(fn) ~= "function" then
+        return nil
+    end
     for i = 1, 30 do
         local name, val = debug.getupvalue(fn, i)
-        if not name then break end
-        if name == "client" then return val end
+        if not name then
+            break
+        end
+        if name == "client" then
+            return val
+        end
     end
 end
 
 ---@param lsp_client vim.lsp.Client
 local function patch_rpc_class(lsp_client)
-    if _class_patched then return end
+    if _class_patched then
+        return
+    end
 
     local rpc_client = get_rpc_client(lsp_client)
-    if not rpc_client then return end
+    if not rpc_client then
+        return
+    end
 
     local mt = getmetatable(rpc_client)
-    if not mt or type(mt.__index) ~= "table" then return end
+    if not mt or type(mt.__index) ~= "table" then
+        return
+    end
 
     local Client_class = mt.__index
-    if type(Client_class.handle_body) ~= "function" then return end
+    if type(Client_class.handle_body) ~= "function" then
+        return
+    end
 
     local orig = Client_class.handle_body
     _class_patched = true
@@ -142,7 +162,9 @@ end
 vim.schedule(function()
     for _, c in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
         patch_rpc_class(c)
-        if _class_patched then break end
+        if _class_patched then
+            break
+        end
     end
 end)
 
@@ -168,7 +190,10 @@ local function find_client(path)
     local np = norm(path)
     for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
         local root = norm(client.root_dir or "")
-        if #root > 0 and (np == root or (np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/")) then
+        if
+            #root > 0
+            and (np == root or (np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/"))
+        then
             return client
         end
     end
@@ -218,8 +243,8 @@ local function index_by_file(result)
                     if not by_file[fpath] then
                         by_file[fpath] = {
                             codeunit_name = codeunit.name,
-                            codeunit_id   = codeunit.codeunitId,
-                            tests         = {},
+                            codeunit_id = codeunit.codeunitId,
+                            tests = {},
                         }
                     end
                     table.insert(by_file[fpath].tests, test)
@@ -238,7 +263,9 @@ end
 ---@return {codeunit_name:string, codeunit_id:integer, tests:table[]}|nil
 local function find_for_path(client_id, norm_path)
     -- norm_path must already be normalised with norm() by the caller
-    if not cache[client_id] then cache[client_id] = {} end
+    if not cache[client_id] then
+        cache[client_id] = {}
+    end
     if cache[client_id][norm_path] ~= nil then
         local v = cache[client_id][norm_path]
         return v ~= MISSING and v or nil
@@ -254,8 +281,8 @@ local function find_for_path(client_id, norm_path)
                         if not result then
                             result = {
                                 codeunit_name = codeunit.name,
-                                codeunit_id   = codeunit.codeunitId,
-                                tests         = {},
+                                codeunit_id = codeunit.codeunitId,
+                                tests = {},
                             }
                         end
                         table.insert(result.tests, test)
@@ -274,15 +301,15 @@ end
 ---@param client_id? integer  nil = clear all workspaces
 function M.invalidate(client_id)
     if client_id then
-        raw_tree[client_id]             = nil
-        cache[client_id]                = nil
-        test_file_set[client_id]        = nil
+        raw_tree[client_id] = nil
+        cache[client_id] = nil
+        test_file_set[client_id] = nil
         discover_in_progress[client_id] = nil
     else
-        raw_tree             = {}
-        cache                = {}
-        fetch_in_progress    = {}
-        test_file_set        = {}
+        raw_tree = {}
+        cache = {}
+        fetch_in_progress = {}
+        test_file_set = {}
         discover_in_progress = {}
     end
 end
@@ -298,8 +325,12 @@ end
 -- Call al/discoverTests immediately and populate raw_tree + test_file_set.
 -- Guard prevents concurrent callers (LspAttach + al/activeProjectLoaded) from doubling up.
 local function discover_when_ready(client, client_id)
-    if discover_in_progress[client_id] then return end
-    if raw_tree[client_id] then return end
+    if discover_in_progress[client_id] then
+        return
+    end
+    if raw_tree[client_id] then
+        return
+    end
     discover_in_progress[client_id] = true
 
     client:request("al/discoverTests", {}, function(req_err, response)
@@ -307,7 +338,7 @@ local function discover_when_ready(client, client_id)
         if not req_err and type(response) == "table" and #response > 0 then
             vim.schedule(function()
                 raw_tree[client_id] = response
-                cache[client_id]    = nil
+                cache[client_id] = nil
                 build_test_file_set(client_id)
             end)
         end
@@ -319,14 +350,16 @@ local function setup_notification_handlers()
     vim.lsp.handlers["al/updateTests"] = function(err, result, ctx, config)
         if result and result.testItems then
             local client_id = ctx.client_id
-            local items     = result.testItems
+            local items = result.testItems
             vim.schedule(function()
                 raw_tree[client_id] = items
-                cache[client_id]    = nil  -- invalidate lazy per-file cache
+                cache[client_id] = nil -- invalidate lazy per-file cache
                 build_test_file_set(client_id)
             end)
         end
-        if prev_update then prev_update(err, result, ctx, config) end
+        if prev_update then
+            prev_update(err, result, ctx, config)
+        end
     end
 
     -- al/projectsLoadedNotification fires once per dependency as the server loads
@@ -337,7 +370,9 @@ local function setup_notification_handlers()
     local prev_loaded = vim.lsp.handlers["al/projectsLoadedNotification"]
     vim.lsp.handlers["al/projectsLoadedNotification"] = function(err, result, ctx, config)
         M.invalidate(ctx.client_id)
-        if prev_loaded then prev_loaded(err, result, ctx, config) end
+        if prev_loaded then
+            prev_loaded(err, result, ctx, config)
+        end
     end
 
     -- al/activeProjectLoaded: newer AL LSP versions fire this instead.
@@ -349,7 +384,9 @@ local function setup_notification_handlers()
         if client then
             discover_when_ready(client, client_id)
         end
-        if prev_active then prev_active(err, result, ctx, config) end
+        if prev_active then
+            prev_active(err, result, ctx, config)
+        end
     end
 
     -- Apply the handle_body patch when an al_ls client attaches.
@@ -394,12 +431,12 @@ local function fetch_and_cache(client)
     end, 1)
     for attempt = 1, 50 do
         if raw_tree[client.id] then
-            break  -- al/updateTests beat us to it
+            break -- al/updateTests beat us to it
         end
         local err, result = request()
         if not err and type(result) == "table" and #result > 0 then
             raw_tree[client.id] = result
-            cache[client.id]    = nil
+            cache[client.id] = nil
             build_test_file_set(client.id)
             break
         end
@@ -447,14 +484,14 @@ function M.discover_positions(path)
     -- Avoids a blocking vim.fn.readfile call (which can stall the UI on Windows
     -- when the file is temporarily locked by AV or the AL Language Server).
     local last_test_range = file_data.tests[#file_data.tests].location.range
-    local file_end_line   = last_test_range["end"].line
+    local file_end_line = last_test_range["end"].line
 
     local pos_list = {
         {
-            type  = "file",
-            path  = canonical_path,
-            name  = file_data.codeunit_name,
-            id    = canonical_path,
+            type = "file",
+            path = canonical_path,
+            name = file_data.codeunit_name,
+            id = canonical_path,
             range = { 0, 0, file_end_line, 0 },
         },
     }
@@ -462,10 +499,10 @@ function M.discover_positions(path)
     for _, test in ipairs(file_data.tests) do
         local r = test.location.range
         table.insert(pos_list, {
-            type  = "test",
-            path  = canonical_path,
-            name  = test.name,
-            id    = canonical_path .. "::" .. test.name,
+            type = "test",
+            path = canonical_path,
+            name = test.name,
+            id = canonical_path .. "::" .. test.name,
             range = { r.start.line, r.start.character, r["end"].line, r["end"].character },
         })
     end
@@ -485,7 +522,9 @@ function M.discover_positions(path)
     -- listener fires.  All subsequent listeners then just set the render_ready
     -- flag rather than spawning new loops.
     nio.sleep(0)
-    return Tree.from_list(pos_list, function(pos) return pos.id end)
+    return Tree.from_list(pos_list, function(pos)
+        return pos.id
+    end)
 end
 
 --- Returns true if path is known to contain AL tests according to the LSP.
@@ -504,9 +543,9 @@ function M.is_test_file(path)
 end
 
 -- ── Test-only exports ─────────────────────────────────────────────────────────
-M._find_client   = find_client
+M._find_client = find_client
 M._index_by_file = index_by_file
-M._norm          = norm
+M._norm = norm
 M._test_file_set = test_file_set
 
 --- Returns the test entry for a file path, extracting lazily from the raw tree.

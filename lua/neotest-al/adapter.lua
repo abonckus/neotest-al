@@ -1,4 +1,4 @@
-local lib  = require("neotest.lib")
+local lib = require("neotest.lib")
 local base = require("neotest-al.base")
 
 ---@param config? { discovery?: neotest-al.Discovery, runner?: neotest-al.Runner }
@@ -7,7 +7,7 @@ return function(config)
     config = config or {}
 
     local discovery = config.discovery or require("neotest-al.discovery.lsp")
-    local runner    = config.runner    or require("neotest-al.runner.lsp")
+    local runner = config.runner or require("neotest-al.runner.lsp")
 
     assert(
         type(discovery.discover_positions) == "function",

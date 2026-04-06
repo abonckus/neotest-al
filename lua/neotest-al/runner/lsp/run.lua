@@ -1,4 +1,4 @@
-local nio         = require("nio")
+local nio = require("nio")
 local diagnostics = require("neotest-al.runner.lsp.diagnostics")
 
 local M = {}
@@ -14,7 +14,9 @@ local AUTH_PATTERNS = { "unauthorized", "401", "authentication failed" }
 local function is_auth_error(line)
     local lower = line:lower()
     for _, pat in ipairs(AUTH_PATTERNS) do
-        if lower:find(pat, 1, true) then return true end
+        if lower:find(pat, 1, true) then
+            return true
+        end
     end
     return false
 end
@@ -22,10 +24,10 @@ end
 -- Wire global LSP notification handlers once at module load.
 -- Each handler filters by client_id so only active runs are touched.
 local function setup_handlers()
-    local prev_msg    = vim.lsp.handlers["al/testExecutionMessage"]
-    local prev_start  = vim.lsp.handlers["al/testMethodStart"]
+    local prev_msg = vim.lsp.handlers["al/testExecutionMessage"]
+    local prev_start = vim.lsp.handlers["al/testMethodStart"]
     local prev_finish = vim.lsp.handlers["al/testMethodFinish"]
-    local prev_done   = vim.lsp.handlers["al/testRunComplete"]
+    local prev_done = vim.lsp.handlers["al/testRunComplete"]
 
     vim.lsp.handlers["al/testExecutionMessage"] = function(err, result, ctx, config)
         local state = active_runs[ctx.client_id]
@@ -44,25 +46,31 @@ local function setup_handlers()
                 end
             end
         end
-        if prev_msg then prev_msg(err, result, ctx, config) end
+        if prev_msg then
+            prev_msg(err, result, ctx, config)
+        end
     end
 
     vim.lsp.handlers["al/testMethodStart"] = function(err, result, ctx, config)
-        if prev_start then prev_start(err, result, ctx, config) end
+        if prev_start then
+            prev_start(err, result, ctx, config)
+        end
     end
 
     vim.lsp.handlers["al/testMethodFinish"] = function(err, result, ctx, config)
         local state = active_runs[ctx.client_id]
         if state and result and type(result.name) == "string" and result.name ~= "" then
             table.insert(state.tests, {
-                name        = result.name,
+                name = result.name,
                 codeunit_id = result.codeunitId,
-                status      = result.status,
-                message     = result.message or "",
-                duration    = result.duration or 0,
+                status = result.status,
+                message = result.message or "",
+                duration = result.duration or 0,
             })
         end
-        if prev_finish then prev_finish(err, result, ctx, config) end
+        if prev_finish then
+            prev_finish(err, result, ctx, config)
+        end
     end
 
     vim.lsp.handlers["al/testRunComplete"] = function(err, result, ctx, config)
@@ -70,14 +78,16 @@ local function setup_handlers()
         if state then
             state.done = true
         end
-        if prev_done then prev_done(err, result, ctx, config) end
+        if prev_done then
+            prev_done(err, result, ctx, config)
+        end
     end
 end
 
 setup_handlers()
 
 -- Maximum ticks to wait for al/testRunComplete before timing out (5 minutes).
-local MAX_TICKS = 15000  -- 15000 × 20 ms = 300 s
+local MAX_TICKS = 15000 -- 15000 × 20 ms = 300 s
 -- Ticks at which we declare auth failure if got_401 and no messages arrived.
 -- 250 × 20 ms = 5 s — long enough for publish-failure notifications to arrive,
 -- short enough to give fast feedback when truly unauthenticated.
@@ -98,17 +108,17 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
     diagnostics.clear()
 
     local state = {
-        done         = false,
-        build_log    = {},
+        done = false,
+        build_log = {},
         build_errors = {},
-        tests        = {},
-        auth_error   = false,
-        got_401      = false,   -- set when al/runTests response carries a 401 error
+        tests = {},
+        auth_error = false,
+        got_401 = false, -- set when al/runTests response carries a 401 error
     }
     active_runs[client.id] = state
 
     opts = opts or {}
-    local max_ticks          = opts.max_ticks or MAX_TICKS
+    local max_ticks = opts.max_ticks or MAX_TICKS
     local auth_timeout_ticks = opts.auth_timeout_ticks or AUTH_TIMEOUT_TICKS
 
     -- Fire al/runTests.
@@ -117,12 +127,12 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
     -- alone — instead we set got_401 and watch for al/testExecutionMessage activity.
     -- If no activity arrives within ~5 s the request was truly rejected, not just failed.
     client:request("al/runTests", {
-        configuration          = config,
-        Tests                  = test_items,
-        SkipPublish            = skip_publish,
+        configuration = config,
+        Tests = test_items,
+        SkipPublish = skip_publish,
         VSCodeExtensionVersion = version or "18.0.0",
-        CoverageMode           = "none",
-        Args                   = {},
+        CoverageMode = "none",
+        Args = {},
     }, function(err)
         if err and type(err) == "table" and err.data == 401 then
             state.got_401 = true
@@ -161,10 +171,10 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
 
     -- Write results file
     local ok, encoded = pcall(vim.json.encode, {
-        build_log    = state.build_log,
+        build_log = state.build_log,
         build_errors = state.build_errors,
-        tests        = state.tests,
-        auth_error   = state.auth_error,
+        tests = state.tests,
+        auth_error = state.auth_error,
     })
     if ok then
         local f = io.open(results_path, "w")
