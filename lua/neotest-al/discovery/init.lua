@@ -3,4 +3,4 @@
 ---@field discover_positions fun(path: string): neotest.Tree|nil              -- async (runs in nio coroutine)
 ---@field invalidate fun(client_id?: integer): nil                            -- nil clears all workspaces
 ---@field is_test_file fun(path: string): boolean                             -- returns true if path contains AL tests
----@field get_items fun(path: string): {codeunit_name: string, codeunit_id: integer, app_id: string, tests: table[]}|nil
+---@field get_items fun(path: string): {codeunit_name: string, codeunit_id: integer, tests: table[]}|nil
