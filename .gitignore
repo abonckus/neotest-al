@@ -1,6 +1,9 @@
 # Local docs (internal notes, planning artifacts)
 docs/
 
+# Claude Code local settings
+.claude/
+
 # Dev scratch scripts
 debug_hover.lua
 test_query.lua
