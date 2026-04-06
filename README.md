@@ -16,7 +16,7 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
-    "your-org/neotest-al",
+    "abonckus/neotest-al",
     dependencies = {
         "nvim-neotest/neotest",
         "nvim-neotest/nvim-nio",
@@ -28,7 +28,7 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ### Zero config (recommended)
 
-Defaults to LSP discovery and the LSP runner placeholder. Tests are discoverable as soon as `al_ls` attaches.
+Defaults to LSP discovery and the LSP runner. Tests are discoverable as soon as `al_ls` attaches.
 
 ```lua
 require("neotest").setup({
@@ -70,7 +70,7 @@ require("neotest-al")({
 
 | Module | Description |
 |--------|-------------|
-| `neotest-al.runner.lsp` | Placeholder. Shows a warning and skips execution. LSP-based running (`al/runTests`) is not yet implemented. |
+| `neotest-al.runner.lsp` | Built-in runner. Executes tests via the `al/runTests` LSP request. Reads launch configuration from `.vscode/launch.json` (prompts with `vim.ui.select` when multiple configs exist). Polls `al/hasProjectClosureLoadedRequest` before running, tracks dirty state to skip unnecessary publishes, and handles auth failures (401), compiler errors, and build diagnostics. Writes colored output with ANSI codes. |
 | Custom | Any table implementing the `Runner` interface (see below). |
 
 ## Writing a Custom Runner

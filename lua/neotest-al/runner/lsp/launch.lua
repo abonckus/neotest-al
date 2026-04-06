@@ -39,7 +39,9 @@ local function watch_launch_json(launch_path, root)
     watching[norm] = true
     vim.api.nvim_create_autocmd("BufWritePost", {
         pattern  = norm,
-        callback = function() config_cache[root] = nil end,
+        callback = function()
+            config_cache[root] = nil
+        end,
     })
 end
 

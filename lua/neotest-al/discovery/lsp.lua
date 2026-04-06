@@ -1,6 +1,58 @@
 local Tree = require("neotest.types").Tree
 local nio  = require("nio")
 
+-- ── Windows path normalisation for Tree lookups ───────────────────────────────
+--
+-- On Windows, neotest's internal tree uses backslash position IDs (produced by
+-- lib.files.find with sep="\\"), but its CursorHold handler looks up positions
+-- using vim.fn.expand("%:p") which returns forward-slash paths.  The mismatch
+-- means get_key misses every time → hover/jump in the summary never works.
+--
+-- Fix: patch Tree:get_key once at module load to fall back to a backslash-
+-- normalised lookup when the exact key isn't found on Windows.  All Tree
+-- instances share this method via their metatable, so one patch covers all.
+do
+    local IS_WIN = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
+    if IS_WIN then
+        local orig = Tree.get_key
+        Tree.get_key = function(self, key)
+            local v = orig(self, key)
+            if v ~= nil then return v end
+            if type(key) ~= "string" then return nil end
+
+            -- Fast path: try pure-backslash version (covers the common case where
+            -- neotest looks up a forward-slash path against our backslash file keys).
+            local bs_key = key:gsub("/", "\\")
+            if bs_key ~= key then
+                v = orig(self, bs_key)
+                if v ~= nil then return v end
+            end
+
+            -- Normalised key for the remaining two fallbacks.
+            local norm = key:gsub("\\", "/"):lower()
+
+            -- _nodes scan: handles mixed-separator dir keys produced by neotest's
+            -- parse_dir_from_files (root has "/" while subpath uses "\").
+            for k, node in pairs(self._nodes) do
+                if type(k) == "string" and k:gsub("\\", "/"):lower() == norm then
+                    return node
+                end
+            end
+
+            -- Structural traversal: last resort for nodes that are reachable via
+            -- _children but were never correctly inserted into the shared _nodes
+            -- table (happens when neotest's merge wraps trees in empty-path sentinel
+            -- nodes on Windows, breaking the _nodes propagation).
+            for _, node in self:iter_nodes() do
+                local id = node:data().id
+                if type(id) == "string" and id:gsub("\\", "/"):lower() == norm then
+                    return node
+                end
+            end
+        end
+    end
+end
+
 ---@type neotest-al.Discovery
 local M = {}
 M.name = "lsp"
@@ -116,7 +168,7 @@ local function find_client(path)
     local np = norm(path)
     for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
         local root = norm(client.root_dir or "")
-        if #root > 0 and np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/" then
+        if #root > 0 and (np == root or (np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/")) then
             return client
         end
     end
@@ -327,7 +379,9 @@ local function fetch_and_cache(client)
     while fetch_in_progress[client.id] do
         nio.sleep(20)
     end
-    if raw_tree[client.id] then return end
+    if raw_tree[client.id] then
+        return
+    end
 
     fetch_in_progress[client.id] = true
 
@@ -338,8 +392,10 @@ local function fetch_and_cache(client)
     local request = nio.wrap(function(cb)
         client:request("al/discoverTests", {}, cb)
     end, 1)
-    for _ = 1, 50 do
-        if raw_tree[client.id] then break end  -- al/updateTests beat us to it
+    for attempt = 1, 50 do
+        if raw_tree[client.id] then
+            break  -- al/updateTests beat us to it
+        end
         local err, result = request()
         if not err and type(result) == "table" and #result > 0 then
             raw_tree[client.id] = result
@@ -360,18 +416,32 @@ end
 ---@return neotest.Tree|nil
 function M.discover_positions(path)
     local client = find_client(path)
-    if not client then return nil end
+    if not client then
+        return nil
+    end
 
     if not raw_tree[client.id] then
         fetch_and_cache(client)
     end
 
-    if not raw_tree[client.id] then return nil end
+    if not raw_tree[client.id] then
+        return nil
+    end
 
     local file_data = find_for_path(client.id, norm(path))
     if not file_data or #file_data.tests == 0 then
         return nil
     end
+
+    -- On Windows, normalise the path to use backslashes so it matches the paths
+    -- neotest produces from lib.files.find (which uses sep = "\\").  Mixed
+    -- separators across calls (BufWritePost gives forward-slashes, the directory
+    -- walker gives backslashes) would cause neotest to store duplicate position
+    -- entries for the same file and trigger redundant directory rescans.
+    -- On Windows, neotest's lib.files.find uses sep="\\" so all position IDs in
+    -- its internal tree use backslashes.  We match that format so our file nodes
+    -- merge correctly and get_position lookups succeed.
+    local canonical_path = IS_WINDOWS and path:gsub("/", "\\") or path
 
     -- Use the last test's end line for the file range.
     -- Avoids a blocking vim.fn.readfile call (which can stall the UI on Windows
@@ -382,9 +452,9 @@ function M.discover_positions(path)
     local pos_list = {
         {
             type  = "file",
-            path  = path,
+            path  = canonical_path,
             name  = file_data.codeunit_name,
-            id    = path,
+            id    = canonical_path,
             range = { 0, 0, file_end_line, 0 },
         },
     }
@@ -393,13 +463,28 @@ function M.discover_positions(path)
         local r = test.location.range
         table.insert(pos_list, {
             type  = "test",
-            path  = path,
+            path  = canonical_path,
             name  = test.name,
-            id    = path .. "::" .. test.name,
+            id    = canonical_path .. "::" .. test.name,
             range = { r.start.line, r.start.character, r["end"].line, r["end"].character },
         })
     end
 
+    -- Yield to the event loop before returning.  When neotest rescans all test
+    -- files after a save, it calls discover_positions for every file in rapid
+    -- succession.  Because cache hits involve no async operations, all 60 calls
+    -- complete synchronously without ever yielding.  neotest queues one
+    -- `discover_positions` listener coroutine per file; when the event loop
+    -- finally runs them all at once, each one checks `summary.running` (still
+    -- false because the render-loop coroutine hasn't started yet) and schedules
+    -- its own render loop — resulting in 60 concurrent render loops that
+    -- permanently flood the event loop.
+    --
+    -- A single nio.sleep(0) here yields after each file, giving the event loop
+    -- a chance to start the render loop and set `running = true` before the next
+    -- listener fires.  All subsequent listeners then just set the render_ready
+    -- flag rather than spawning new loops.
+    nio.sleep(0)
     return Tree.from_list(pos_list, function(pos) return pos.id end)
 end
 
@@ -411,7 +496,9 @@ end
 function M.is_test_file(path)
     local np = norm(path)
     for _, file_set in pairs(test_file_set) do
-        if file_set[np] then return true end
+        if file_set[np] then
+            return true
+        end
     end
     return false
 end
@@ -430,7 +517,9 @@ function M.get_items(path)
     local np = norm(path)
     for client_id in pairs(raw_tree) do
         local data = find_for_path(client_id, np)
-        if data then return data end
+        if data then
+            return data
+        end
     end
 end
 

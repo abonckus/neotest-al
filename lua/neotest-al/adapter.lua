@@ -35,7 +35,9 @@ return function(config)
         name = "neotest-al",
         root = lib.files.match_root_pattern(".alpackages", "app.json"),
 
-        is_test_file = function(path) return discovery.is_test_file(path) end,
+        is_test_file = function(path)
+            return discovery.is_test_file(path)
+        end,
 
         ---@async
         discover_positions = function(path)

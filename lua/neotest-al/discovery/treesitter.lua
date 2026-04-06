@@ -81,4 +81,18 @@ function M.invalidate(_client_id)
     -- no-op
 end
 
+---@param path string
+---@return boolean
+--- Reads the first 1 KB of the file and checks for an AL Test subtype declaration.
+function M.is_test_file(path)
+    if not vim.endswith(path, ".al") then
+        return false
+    end
+    local f = io.open(path, "r")
+    if not f then return false end
+    local prefix = f:read(1024)
+    f:close()
+    return prefix ~= nil and prefix:match("[Ss]ubtype%s*=%s*[Tt]est") ~= nil
+end
+
 return M

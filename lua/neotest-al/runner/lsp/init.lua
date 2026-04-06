@@ -59,16 +59,18 @@ local function wait_for_project_closure(client, workspace_root, max_polls)
         client:request("al/hasProjectClosureLoadedRequest", { workspacePath = path }, cb)
     end, 1)
 
-    for _ = 1, max_polls do
+    for poll = 1, max_polls do
         local err, result = request()
-        if not err and result and result.loaded then return true end
+        if not err and result and result.loaded then
+            return true
+        end
         nio.sleep(200)
     end
     return false
 end
 
 --- Create a new LSP runner instance.
----@param opts? { launch_json_path?: string, vscode_extension_version?: string }
+---@param opts? { launch_json_path?: string, vscode_extension_version?: string, max_ticks?: integer, auth_timeout_ticks?: integer }
 ---@return neotest-al.Runner
 function M.new(opts)
     opts = opts or {}
@@ -124,7 +126,10 @@ function M.new(opts)
 
         -- Execute tests (blocks until al/testRunComplete or timeout)
         local results_path = vim.fn.tempname() .. ".json"
-        local success = run.execute(client, config, test_items, results_path, skip_publish, opts.vscode_extension_version)
+        local success = run.execute(client, config, test_items, results_path, skip_publish, opts.vscode_extension_version, {
+            max_ticks          = opts.max_ticks,
+            auth_timeout_ticks = opts.auth_timeout_ticks,
+        })
 
         -- Update dirty state
         if success and not skip_publish then

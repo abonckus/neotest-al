@@ -78,6 +78,10 @@ setup_handlers()
 
 -- Maximum ticks to wait for al/testRunComplete before timing out (5 minutes).
 local MAX_TICKS = 15000  -- 15000 × 20 ms = 300 s
+-- Ticks at which we declare auth failure if got_401 and no messages arrived.
+-- 250 × 20 ms = 5 s — long enough for publish-failure notifications to arrive,
+-- short enough to give fast feedback when truly unauthenticated.
+local AUTH_TIMEOUT_TICKS = 250
 
 --- Send al/runTests and block until al/testRunComplete fires (or timeout).
 --- Writes accumulated results to results_path as JSON.
@@ -88,8 +92,9 @@ local MAX_TICKS = 15000  -- 15000 × 20 ms = 300 s
 ---@param test_items   table[]   raw LSP test item objects for al/runTests
 ---@param results_path string    path to write JSON results file
 ---@param skip_publish boolean   passed as SkipPublish to al/runTests
+---@param opts?        { max_ticks?: integer, auth_timeout_ticks?: integer }
 ---@return boolean  true when run completed with no build errors
-function M.execute(client, config, test_items, results_path, skip_publish, version)
+function M.execute(client, config, test_items, results_path, skip_publish, version, opts)
     diagnostics.clear()
 
     local state = {
@@ -101,6 +106,10 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
         got_401      = false,   -- set when al/runTests response carries a 401 error
     }
     active_runs[client.id] = state
+
+    opts = opts or {}
+    local max_ticks          = opts.max_ticks or MAX_TICKS
+    local auth_timeout_ticks = opts.auth_timeout_ticks or AUTH_TIMEOUT_TICKS
 
     -- Fire al/runTests.
     -- The server returns a 401 error response both for genuine auth failures AND for
@@ -120,21 +129,21 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
         end
     end)
 
-    -- Ticks at which we declare auth failure if got_401 and no messages arrived.
-    -- 250 × 20 ms = 5 s — long enough for publish-failure notifications to arrive,
-    -- short enough to give fast feedback when truly unauthenticated.
-    local AUTH_TIMEOUT_TICKS = 250
-
-    -- Wait for al/testRunComplete (or bail early on auth error).
+    -- Wait for al/testRunComplete (or bail early on genuine auth rejection).
+    -- NOTE: auth-related strings in al/testExecutionMessage (e.g. from AL callstacks
+    -- in test failures) set state.auth_error but must NOT abort the wait — the test
+    -- may still complete normally.  Only bail early when the server returned 401 AND
+    -- no execution messages have arrived (genuine rejection, no testRunComplete coming).
     local ticks = 0
-    while not state.done and not state.auth_error and ticks < MAX_TICKS do
+    while not state.done and ticks < max_ticks do
         nio.sleep(20)
         ticks = ticks + 1
         -- If the server returned 401 but no al/testExecutionMessage has arrived
-        -- within 5 s, this is a genuine auth rejection (the server won't send
-        -- al/testRunComplete). Declare auth failure and exit.
-        if state.got_401 and #state.build_log == 0 and ticks >= AUTH_TIMEOUT_TICKS then
+        -- within auth_timeout_ticks, this is a genuine auth rejection (the server
+        -- won't send al/testRunComplete). Declare auth failure and exit.
+        if state.got_401 and #state.build_log == 0 and ticks >= auth_timeout_ticks then
             state.auth_error = true
+            break
         end
     end
 
@@ -165,7 +174,8 @@ function M.execute(client, config, test_items, results_path, skip_publish, versi
         end
     end
 
-    return #state.build_errors == 0
+    local success = #state.build_errors == 0
+    return success
 end
 
 -- Test-only: reset active_runs to isolate tests.

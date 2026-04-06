@@ -46,6 +46,16 @@ describe("neotest-al.discovery.lsp", function()
 
             vim.lsp.get_clients = orig
         end)
+
+        it("returns client when path equals the workspace root (run-all-tests case)", function()
+            local mock = { id = 1, root_dir = "/workspace", name = "al_ls" }
+            local orig = vim.lsp.get_clients
+            vim.lsp.get_clients = function() return { mock } end
+
+            assert.are.equal(mock, lsp._find_client("/workspace"))
+
+            vim.lsp.get_clients = orig
+        end)
     end)
 
     -- ── _index_by_file ────────────────────────────────────────────────────────

@@ -2,3 +2,4 @@
 ---@field name string                                                          -- display name, e.g. "lsp", "treesitter"
 ---@field discover_positions fun(path: string): neotest.Tree|nil              -- async (runs in nio coroutine)
 ---@field invalidate fun(client_id?: integer): nil                            -- nil clears all workspaces
+---@field is_test_file fun(path: string): boolean                             -- returns true if path contains AL tests
