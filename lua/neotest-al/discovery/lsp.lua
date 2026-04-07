@@ -194,22 +194,8 @@ end
 ---@return vim.lsp.Client|nil
 local function find_client(path)
     local np = norm(path)
-    local clients = vim.lsp.get_clients({ name = "al_ls" })
-    vim.notify(
-        ("neotest-al find_client: path=%s clients=%d"):format(np, #clients),
-        vim.log.levels.DEBUG,
-        { title = "neotest-al" }
-    )
-    for _, client in ipairs(clients) do
+    for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
         local root = norm(client.root_dir or "")
-        vim.notify(
-            ("neotest-al find_client:   root=%s match=%s"):format(
-                root,
-                tostring(np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/")
-            ),
-            vim.log.levels.DEBUG,
-            { title = "neotest-al" }
-        )
         if
             #root > 0
             and (np == root or (np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/"))
@@ -374,15 +360,6 @@ local function setup_notification_handlers()
             vim.schedule(function()
                 local was_empty = not raw_tree[client_id] or #raw_tree[client_id] == 0
                 local now_populated = #items > 0
-                vim.notify(
-                    ("neotest-al updateTests: items=%d was_empty=%s now_populated=%s"):format(
-                        #items,
-                        tostring(was_empty),
-                        tostring(now_populated)
-                    ),
-                    vim.log.levels.DEBUG,
-                    { title = "neotest-al" }
-                )
                 raw_tree[client_id] = items
                 cache[client_id] = nil -- invalidate lazy per-file cache
                 build_test_file_set(client_id)
@@ -391,19 +368,9 @@ local function setup_notification_handlers()
                 -- for any open AL buffers. The fetch_and_cache retry loop may have
                 -- already timed out before the test data arrived.
                 if was_empty and now_populated then
-                    vim.notify(
-                        "neotest-al: updateTests populated, re-triggering discovery",
-                        vim.log.levels.DEBUG,
-                        { title = "neotest-al" }
-                    )
                     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
                         if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == "al" then
                             local fname = vim.api.nvim_buf_get_name(buf)
-                            vim.notify(
-                                "neotest-al: BufWritePost for " .. fname,
-                                vim.log.levels.DEBUG,
-                                { title = "neotest-al" }
-                            )
                             -- Use pattern= so global autocmds (neotest) fire,
                             -- not just buffer-local ones
                             vim.api.nvim_exec_autocmds("BufWritePost", {
@@ -608,18 +575,11 @@ end
 ---@return boolean
 function M.is_test_file(path)
     local np = norm(path)
-    local total = 0
     for _, file_set in pairs(test_file_set) do
-        total = total + vim.tbl_count(file_set)
         if file_set[np] then
             return true
         end
     end
-    vim.notify(
-        ("neotest-al is_test_file: FALSE path=%s test_file_set has %d entries"):format(np, total),
-        vim.log.levels.DEBUG,
-        { title = "neotest-al" }
-    )
     return false
 end
 
