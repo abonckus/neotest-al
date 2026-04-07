@@ -1,0 +1,179 @@
+name: Release
+
+on:
+    workflow_dispatch:
+        inputs:
+            version_type:
+                description: "Version bump type"
+                required: true
+                default: "patch"
+                type: choice
+                options:
+                    - patch
+                    - minor
+                    - major
+            custom_version:
+                description: "Custom version (optional, overrides version_type)"
+                required: false
+                type: string
+            prerelease:
+                description: "Mark as pre-release"
+                required: false
+                default: false
+                type: boolean
+            draft:
+                description: "Create as draft release"
+                required: false
+                default: false
+                type: boolean
+
+jobs:
+    create-release:
+        name: Create Release
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+
+            - name: Install semver
+              run: npm install -g semver
+
+            - name: Get latest tag
+              id: latest_tag
+              run: |
+                  LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+                  echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+                  echo "Latest tag: $LATEST_TAG"
+
+            - name: Calculate next version
+              id: version
+              run: |
+                  LATEST_TAG="${{ steps.latest_tag.outputs.latest_tag }}"
+                  CURRENT_VERSION=${LATEST_TAG#v}
+
+                  if [ -n "${{ github.event.inputs.custom_version }}" ]; then
+                      NEW_VERSION="${{ github.event.inputs.custom_version }}"
+                      NEW_VERSION=${NEW_VERSION#v}
+                      npx semver "$NEW_VERSION" > /dev/null 2>&1 || (echo "Invalid custom version: $NEW_VERSION" && exit 1)
+                  else
+                      case "${{ github.event.inputs.version_type }}" in
+                          "major")
+                              NEW_VERSION=$(npx semver -i major $CURRENT_VERSION)
+                              ;;
+                          "minor")
+                              NEW_VERSION=$(npx semver -i minor $CURRENT_VERSION)
+                              ;;
+                          "patch")
+                              NEW_VERSION=$(npx semver -i patch $CURRENT_VERSION)
+                              ;;
+                          *)
+                              echo "Invalid version type"
+                              exit 1
+                              ;;
+                      esac
+                  fi
+
+                  TAG_NAME="v$NEW_VERSION"
+                  echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+                  echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+                  echo "New version: $NEW_VERSION"
+
+            - name: Generate changelog
+              id: changelog
+              run: |
+                  LATEST_TAG="${{ steps.latest_tag.outputs.latest_tag }}"
+
+                  if [ "$LATEST_TAG" = "v0.0.0" ]; then
+                      COMMITS=$(git log --pretty=format:"%s" --reverse)
+                  else
+                      COMMITS=$(git log ${LATEST_TAG}..HEAD --pretty=format:"%s" --reverse)
+                  fi
+
+                  FEATURES=""
+                  FIXES=""
+                  DOCS=""
+                  PERF=""
+                  REFACTORS=""
+                  BREAKING=""
+
+                  while IFS= read -r commit; do
+                      if [[ $commit =~ ^feat(\(.+\))?!?: ]]; then
+                          FEATURES="${FEATURES}- ${commit#feat*: }\n"
+                      elif [[ $commit =~ ^fix(\(.+\))?: ]]; then
+                          FIXES="${FIXES}- ${commit#fix*: }\n"
+                      elif [[ $commit =~ ^docs(\(.+\))?: ]]; then
+                          DOCS="${DOCS}- ${commit#docs*: }\n"
+                      elif [[ $commit =~ ^perf(\(.+\))?: ]]; then
+                          PERF="${PERF}- ${commit#perf*: }\n"
+                      elif [[ $commit =~ ^refactor(\(.+\))?: ]]; then
+                          REFACTORS="${REFACTORS}- ${commit#refactor*: }\n"
+                      fi
+                      if [[ $commit =~ "BREAKING CHANGE" ]] || [[ $commit =~ "!:" ]]; then
+                          BREAKING="${BREAKING}- ${commit}\n"
+                      fi
+                  done <<< "$COMMITS"
+
+                  CHANGELOG=""
+                  [ -n "$BREAKING" ]  && CHANGELOG="${CHANGELOG}### ⚠️ Breaking Changes\n${BREAKING}\n"
+                  [ -n "$FEATURES" ]  && CHANGELOG="${CHANGELOG}### ✨ Features\n${FEATURES}\n"
+                  [ -n "$FIXES" ]     && CHANGELOG="${CHANGELOG}### 🐛 Bug Fixes\n${FIXES}\n"
+                  [ -n "$PERF" ]      && CHANGELOG="${CHANGELOG}### ⚡ Performance\n${PERF}\n"
+                  [ -n "$REFACTORS" ] && CHANGELOG="${CHANGELOG}### 🔧 Refactoring\n${REFACTORS}\n"
+                  [ -n "$DOCS" ]      && CHANGELOG="${CHANGELOG}### 📚 Documentation\n${DOCS}\n"
+
+                  if [ -z "$CHANGELOG" ]; then
+                      CHANGELOG="### Changes\n- Various improvements and bug fixes\n"
+                  fi
+
+                  echo "changelog<<EOF" >> $GITHUB_OUTPUT
+                  printf '%b' "$CHANGELOG" >> $GITHUB_OUTPUT
+                  echo "EOF" >> $GITHUB_OUTPUT
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v1
+              with:
+                  tag_name: ${{ steps.version.outputs.tag_name }}
+                  name: Release ${{ steps.version.outputs.tag_name }}
+                  body: |
+                      # neotest-al ${{ steps.version.outputs.tag_name }}
+
+                      ${{ steps.changelog.outputs.changelog }}
+
+                      ## Installation
+
+                      ### lazy.nvim
+                      ```lua
+                      {
+                        "${{ github.repository }}",
+                        version = "${{ steps.version.outputs.tag_name }}",
+                        dependencies = {
+                          "nvim-neotest/neotest",
+                          "nvim-neotest/nvim-nio",
+                        },
+                        opts = {},
+                      }
+                      ```
+                  draft: ${{ github.event.inputs.draft }}
+                  prerelease: ${{ github.event.inputs.prerelease }}
+                  generate_release_notes: false
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Release summary
+              run: |
+                  echo "## Release Created!" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "**Version:** ${{ steps.version.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
+                  echo "**Pre-release:** ${{ github.event.inputs.prerelease }}" >> $GITHUB_STEP_SUMMARY
+                  echo "**Draft:** ${{ github.event.inputs.draft }}" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "[View Release](https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag_name }})" >> $GITHUB_STEP_SUMMARY
