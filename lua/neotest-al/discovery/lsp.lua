@@ -358,9 +358,25 @@ local function setup_notification_handlers()
             local client_id = ctx.client_id
             local items = result.testItems
             vim.schedule(function()
+                local was_empty = not raw_tree[client_id] or #raw_tree[client_id] == 0
+                local now_populated = #items > 0
                 raw_tree[client_id] = items
                 cache[client_id] = nil -- invalidate lazy per-file cache
                 build_test_file_set(client_id)
+                -- When transitioning from empty → populated (server finished loading
+                -- test data after the closure was ready), re-trigger neotest discovery
+                -- for any open AL buffers. The fetch_and_cache retry loop may have
+                -- already timed out before the test data arrived.
+                if was_empty and now_populated then
+                    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+                        if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == "al" then
+                            vim.api.nvim_exec_autocmds(
+                                "BufWritePost",
+                                { buffer = buf, modeline = false }
+                            )
+                        end
+                    end
+                end
             end)
         end
         if prev_update then
