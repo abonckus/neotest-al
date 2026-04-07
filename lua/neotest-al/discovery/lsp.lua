@@ -382,12 +382,25 @@ local function setup_notification_handlers()
                 -- for any open AL buffers. The fetch_and_cache retry loop may have
                 -- already timed out before the test data arrived.
                 if was_empty and now_populated then
+                    vim.notify(
+                        "neotest-al: updateTests populated, re-triggering discovery",
+                        vim.log.levels.DEBUG,
+                        { title = "neotest-al" }
+                    )
                     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
                         if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == "al" then
-                            vim.api.nvim_exec_autocmds(
-                                "BufWritePost",
-                                { buffer = buf, modeline = false }
+                            local fname = vim.api.nvim_buf_get_name(buf)
+                            vim.notify(
+                                "neotest-al: BufWritePost for " .. fname,
+                                vim.log.levels.DEBUG,
+                                { title = "neotest-al" }
                             )
+                            -- Use pattern= so global autocmds (neotest) fire,
+                            -- not just buffer-local ones
+                            vim.api.nvim_exec_autocmds("BufWritePost", {
+                                pattern = fname,
+                                modeline = false,
+                            })
                         end
                     end
                 end
