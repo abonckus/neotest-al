@@ -151,6 +151,12 @@ local function patch_rpc_class(lsp_client)
             -- so Neovim's assert(type(decoded.error)=='table') doesn't fire.
             if e and type(e) ~= "table" then
                 decoded.error = nil
+                -- JSON-RPC requires either `result` or `error`. After removing
+                -- the invalid error, ensure `result` exists so Neovim doesn't
+                -- log INVALID_SERVER_MESSAGE and drop the callback.
+                if decoded.result == nil then
+                    decoded.result = vim.NIL
+                end
                 body = vim.json.encode(decoded)
             end
         end
