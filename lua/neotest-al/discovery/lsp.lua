@@ -407,6 +407,16 @@ end
 -- is ever called.
 setup_notification_handlers()
 
+-- If al_ls is already running when this module loads (common in lazy-loaded
+-- configs), al/updateTests notifications have already fired and been dropped.
+-- Trigger discovery now so raw_tree gets populated.
+vim.schedule(function()
+    for _, c in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
+        patch_rpc_class(c)
+        discover_when_ready(c, c.id)
+    end
+end)
+
 -- ── Fetch from LSP ────────────────────────────────────────────────────────────
 
 ---@param client vim.lsp.Client
