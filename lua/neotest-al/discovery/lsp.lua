@@ -374,6 +374,15 @@ local function setup_notification_handlers()
             vim.schedule(function()
                 local was_empty = not raw_tree[client_id] or #raw_tree[client_id] == 0
                 local now_populated = #items > 0
+                vim.notify(
+                    ("neotest-al updateTests: items=%d was_empty=%s now_populated=%s"):format(
+                        #items,
+                        tostring(was_empty),
+                        tostring(now_populated)
+                    ),
+                    vim.log.levels.DEBUG,
+                    { title = "neotest-al" }
+                )
                 raw_tree[client_id] = items
                 cache[client_id] = nil -- invalidate lazy per-file cache
                 build_test_file_set(client_id)
@@ -593,11 +602,18 @@ end
 ---@return boolean
 function M.is_test_file(path)
     local np = norm(path)
+    local total = 0
     for _, file_set in pairs(test_file_set) do
+        total = total + vim.tbl_count(file_set)
         if file_set[np] then
             return true
         end
     end
+    vim.notify(
+        ("neotest-al is_test_file: FALSE path=%s test_file_set has %d entries"):format(np, total),
+        vim.log.levels.DEBUG,
+        { title = "neotest-al" }
+    )
     return false
 end
 
