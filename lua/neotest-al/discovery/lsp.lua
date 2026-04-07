@@ -421,13 +421,19 @@ local function setup_notification_handlers()
     end
 
     -- al/projectsLoadedNotification fires once per dependency as the server loads
-    -- each workspace (can fire ~30+ times during a multi-project load).  Only
-    -- invalidate the cache here — do NOT trigger discovery, because the project
-    -- closure is not necessarily fully built yet.  al/activeProjectLoaded fires
-    -- once when everything is ready and is the correct trigger for al/discoverTests.
+    -- each workspace (can fire ~30+ times during a multi-project load). In
+    -- multi-project workspaces, notifications arrive for OTHER projects (e.g.
+    -- Cloud) while the active project's (e.g. Test) test data is valid — so we
+    -- must NOT wipe raw_tree when it's already populated, or we'll clear real
+    -- test data just because an unrelated project loaded.
+    -- Only invalidate when raw_tree is still empty (initial load, not a reload
+    -- of an already-discovered project).
     local prev_loaded = vim.lsp.handlers["al/projectsLoadedNotification"]
     vim.lsp.handlers["al/projectsLoadedNotification"] = function(err, result, ctx, config)
-        M.invalidate(ctx.client_id)
+        local client_id = ctx.client_id
+        if not raw_tree[client_id] or #raw_tree[client_id] == 0 then
+            M.invalidate(client_id)
+        end
         if prev_loaded then
             prev_loaded(err, result, ctx, config)
         end
