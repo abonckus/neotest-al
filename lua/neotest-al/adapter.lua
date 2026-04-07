@@ -21,6 +21,10 @@ return function(config)
         "neotest-al: discovery must implement is_test_file(path)"
     )
     assert(
+        type(discovery.get_items) == "function",
+        "neotest-al: discovery must implement get_items(path)"
+    )
+    assert(
         type(runner.build_spec) == "function",
         "neotest-al: runner must implement build_spec(args, discovery)"
     )

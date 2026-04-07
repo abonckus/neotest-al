@@ -12,13 +12,14 @@ describe("neotest-al.adapter", function()
             discover_positions = function() end,
             invalidate         = function() end,
             is_test_file       = function() return false end,
+            get_items          = function() return nil end,
         }
         if overrides then
             for k, v in pairs(overrides) do t[k] = v end
             -- allow explicit nil removal via sentinel
             for k, _ in pairs({
                 discover_positions = true, invalidate = true,
-                name = true, is_test_file = true,
+                name = true, is_test_file = true, get_items = true,
             }) do
                 if overrides[k] == false then t[k] = nil end
             end
@@ -66,6 +67,15 @@ describe("neotest-al.adapter", function()
                 runner    = stub_runner(),
             })
         end, "neotest-al: discovery must implement is_test_file(path)")
+    end)
+
+    it("raises when discovery is missing get_items", function()
+        assert.has_error(function()
+            create_adapter({
+                discovery = stub_discovery({ get_items = false }),
+                runner    = stub_runner(),
+            })
+        end, "neotest-al: discovery must implement get_items(path)")
     end)
 
     it("raises when runner is missing build_spec", function()

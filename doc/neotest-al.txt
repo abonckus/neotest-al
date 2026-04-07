@@ -9,8 +9,9 @@ CONTENTS                                                   *neotest-al-contents*
   4. Configuration ................................. |neotest-al-configuration|
   5. Discovery ..................................... |neotest-al-discovery|
   6. Runner ........................................ |neotest-al-runner|
-  7. Custom runner interface ....................... |neotest-al-custom-runner|
-  8. Custom discovery interface .................... |neotest-al-custom-discovery|
+  7. Compatibility ................................. |neotest-al-compatibility|
+  8. Custom runner interface ....................... |neotest-al-custom-runner|
+  9. Custom discovery interface .................... |neotest-al-custom-discovery|
 
 ==============================================================================
 1. INTRODUCTION                                        *neotest-al-introduction*
@@ -138,7 +139,10 @@ To use treesitter discovery: >lua
 <
 
 Note: `is_test_file` reads the first 1 KB of each `.al` file to check for
-`Subtype = Test`, so it performs a small amount of file I/O per file.
+`Subtype = Test`. `get_items` parses the file for codeunit ID and name, reads
+`app.json` for the app ID, and uses treesitter to extract test positions and
+build LSP-compatible test items for `al/runTests`. Without the AL grammar the
+items list is empty but structural metadata is still returned.
 
 ==============================================================================
 6. RUNNER                                                    *neotest-al-runner*
@@ -148,8 +152,9 @@ LSP Runner ~
 
 Module: `neotest-al.runner.lsp`
 
-Executes tests via the `al/runTests` LSP request. Requires LSP discovery
-(uses `discovery.get_items` and `discovery.get_client`).
+Executes tests via the `al/runTests` LSP request. Works with any discovery
+module that implements the `Discovery` interface — including treesitter
+discovery. Finds the `al_ls` client itself via `vim.lsp.get_clients`.
 
 Behaviour:
   • Reads `.vscode/launch.json` from the workspace root. When multiple AL
@@ -166,7 +171,22 @@ Behaviour:
     the neotest output panel.
 
 ==============================================================================
-7. CUSTOM RUNNER INTERFACE                            *neotest-al-custom-runner*
+7. COMPATIBILITY                                      *neotest-al-compatibility*
+
+Any discovery module can be paired with any runner, as long as both implement
+their respective interfaces.
+
+  Discovery              Runner        Notes ~
+  lsp                    lsp           Recommended. Both sides use the AL LSP.
+  treesitter             lsp           Discovery is offline; execution requires
+                                       an active `al_ls` client. The AL
+                                       treesitter grammar must be installed for
+                                       accurate test positions in `al/runTests`.
+  lsp                    Custom        Custom runner gets LSP-sourced metadata.
+  treesitter             Custom        Custom runner gets treesitter metadata.
+
+==============================================================================
+8. CUSTOM RUNNER INTERFACE                            *neotest-al-custom-runner*
 
 A custom runner must be a table with the following fields: >lua
 
@@ -201,15 +221,16 @@ Register a custom runner: >lua
 <
 
 ==============================================================================
-8. CUSTOM DISCOVERY INTERFACE                      *neotest-al-custom-discovery*
+9. CUSTOM DISCOVERY INTERFACE                      *neotest-al-custom-discovery*
 
 A custom discovery module must be a table with the following fields: >lua
 
     ---@class neotest-al.Discovery
-    ---@field name              string
-    ---@field is_test_file      fun(path: string): boolean
+    ---@field name               string
+    ---@field is_test_file       fun(path: string): boolean
     ---@field discover_positions fun(path: string): neotest.Tree|nil
-    ---@field invalidate        fun(client_id?: integer): nil
+    ---@field invalidate         fun(client_id?: integer): nil
+    ---@field get_items          fun(path: string): {codeunit_name: string, codeunit_id: integer, tests: table[]}|nil
 <
 
 Fields:
@@ -217,6 +238,10 @@ Fields:
   • `is_test_file`       — return true if the file at `path` contains AL tests
   • `discover_positions` — async; return a |neotest.Tree| for the file, or nil
   • `invalidate`         — clear cached discovery data; `nil` clears all
+  • `get_items`          — return LSP-compatible test item metadata for the file,
+                           or nil if the file has no tests. Each test in `tests[]`
+                           must have `name`, `codeunitId`, `appId`, `scope` (= 2),
+                           and `location` fields matching the `al/runTests` schema.
 
 Register a custom discovery module: >lua
 

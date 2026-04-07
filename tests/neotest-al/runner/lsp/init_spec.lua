@@ -4,6 +4,8 @@ describe("neotest-al.runner.lsp.init", function()
     -- Stub sub-modules so tests are isolated
     local stub_launch, stub_dirty, stub_run
 
+    local orig_get_clients = vim.lsp.get_clients
+
     before_each(function()
         package.loaded["neotest-al.runner.lsp.init"]        = nil
         package.loaded["neotest-al.runner.lsp.launch"]      = nil
@@ -46,7 +48,14 @@ describe("neotest-al.runner.lsp.init", function()
         package.loaded["neotest-al.runner.lsp.run"]         = stub_run
         package.loaded["neotest-al.runner.lsp.diagnostics"] = { set = function() end, clear = function() end, parse_line = function() end }
 
+        -- Default: no al_ls clients. Override per-test with vim.lsp.get_clients = ...
+        vim.lsp.get_clients = function() return {} end
+
         lsp_runner = require("neotest-al.runner.lsp.init").new()
+    end)
+
+    after_each(function()
+        vim.lsp.get_clients = orig_get_clients
     end)
 
     local function run_async(fn)
@@ -82,28 +91,21 @@ describe("neotest-al.runner.lsp.init", function()
         }
     end
 
-    local function make_discovery(items_by_path, client)
+    -- discovery no longer needs get_client — runner finds the client itself
+    local function make_discovery(items_by_path)
         return {
-            get_items  = function(path) return items_by_path[vim.fs.normalize(path)] end,
-            get_client = function(path) return client end,
+            get_items          = function(path) return items_by_path[vim.fs.normalize(path)] end,
             discover_positions = function() end,
-            invalidate = function() end,
+            invalidate         = function() end,
+            is_test_file       = function() end,
         }
     end
 
     -- ── build_spec ─────────────────────────────────────────────────────────────
     describe("build_spec", function()
-        it("returns nil when discovery does not expose get_items", function()
-            local discovery = { discover_positions = function() end, invalidate = function() end }
-            local runner = require("neotest-al.runner.lsp.init").new()
-            local spec = run_async(function()
-                return runner.build_spec({ tree = make_tree("test", "/ws/F.al", "TestA", "/ws/F.al::TestA") }, discovery)
-            end)
-            assert.is_nil(spec)
-        end)
-
         it("returns nil when no client found", function()
-            local discovery = make_discovery({}, nil)
+            -- vim.lsp.get_clients returns {} by default
+            local discovery = make_discovery({})
             local spec = run_async(function()
                 return lsp_runner.build_spec(
                     { tree = make_tree("test", "/ws/F.al", "TestA", "/ws/F.al::TestA") },
@@ -114,8 +116,12 @@ describe("neotest-al.runner.lsp.init", function()
         end)
 
         it("returns nil when no test items collected", function()
-            local client    = make_client(600, "/ws")
-            local discovery = make_discovery({}, client)  -- empty — get_items returns nil
+            local client = make_client(600, "/ws")
+            vim.lsp.get_clients = function(opts)
+                if opts and opts.name == "al_ls" then return { client } end
+                return {}
+            end
+            local discovery = make_discovery({}) -- empty — get_items returns nil
             local spec = run_async(function()
                 return lsp_runner.build_spec(
                     { tree = make_tree("test", "/ws/F.al", "TestA", "/ws/F.al::TestA") },
@@ -127,7 +133,11 @@ describe("neotest-al.runner.lsp.init", function()
 
         it("returns spec with results_path and id_map", function()
             local client = make_client(601, "/ws")
-            local norm   = vim.fs.normalize("/ws/F.al")
+            vim.lsp.get_clients = function(opts)
+                if opts and opts.name == "al_ls" then return { client } end
+                return {}
+            end
+            local norm = vim.fs.normalize("/ws/F.al")
             local discovery = make_discovery({
                 [norm] = {
                     codeunit_name = "My Codeunit",
@@ -137,7 +147,7 @@ describe("neotest-al.runner.lsp.init", function()
                           location = { source = "file:///ws/F.al", range = { start = { line = 1, character = 0 }, ["end"] = { line = 1, character = 5 } } } },
                     },
                 },
-            }, client)
+            })
 
             local tree = make_tree("test", "/ws/F.al", "TestA", norm .. "::TestA")
             local spec = run_async(function()
@@ -161,6 +171,10 @@ describe("neotest-al.runner.lsp.init", function()
                     return true, 700
                 end,
             }
+            vim.lsp.get_clients = function(opts)
+                if opts and opts.name == "al_ls" then return { client } end
+                return {}
+            end
             local norm = vim.fs.normalize("/ws/F.al")
             local discovery = make_discovery({
                 [norm] = {
@@ -172,7 +186,7 @@ describe("neotest-al.runner.lsp.init", function()
                             range = { start = { line = 1, character = 0 }, ["end"] = { line = 1, character = 5 } } } },
                     },
                 },
-            }, client)
+            })
 
             local tree = make_tree("test", "/ws/F.al", "TestA", norm .. "::TestA")
             run_async(function()
@@ -196,6 +210,10 @@ describe("neotest-al.runner.lsp.init", function()
                     return true, 701
                 end,
             }
+            vim.lsp.get_clients = function(opts)
+                if opts and opts.name == "al_ls" then return { client } end
+                return {}
+            end
             local norm = vim.fs.normalize("/ws/F.al")
             local discovery = make_discovery({
                 [norm] = {
@@ -207,7 +225,7 @@ describe("neotest-al.runner.lsp.init", function()
                             range = { start = { line = 1, character = 0 }, ["end"] = { line = 1, character = 5 } } } },
                     },
                 },
-            }, client)
+            })
 
             local tree = make_tree("test", "/ws/F.al", "TestA", norm .. "::TestA")
             -- _closure_max_polls=1 so timeout is hit in ~200ms, not 30s
@@ -217,6 +235,43 @@ describe("neotest-al.runner.lsp.init", function()
             end)
 
             assert.is_nil(spec)
+        end)
+
+        it("works with a discovery module that has no get_client (treesitter path)", function()
+            local client = make_client(900, "/ws")
+            vim.lsp.get_clients = function(opts)
+                if opts and opts.name == "al_ls" then return { client } end
+                return {}
+            end
+            local norm = vim.fs.normalize("/ws/F.al")
+            -- discovery has get_items but NOT get_client
+            local discovery = {
+                get_items = function(path)
+                    if vim.fs.normalize(path) == norm then
+                        return {
+                            codeunit_name = "My CU",
+                            codeunit_id   = 900,
+                            tests = {
+                                { name = "TestA", appId = "x", codeunitId = 900, scope = 2,
+                                  location = { source = "file:///ws/F.al",
+                                               range  = { start = { line = 1, character = 0 },
+                                                          ["end"] = { line = 1, character = 5 } } } },
+                            },
+                        }
+                    end
+                end,
+                discover_positions = function() end,
+                invalidate         = function() end,
+                is_test_file       = function() end,
+            }
+
+            local tree = make_tree("test", "/ws/F.al", "TestA", norm .. "::TestA")
+            local spec = run_async(function()
+                return lsp_runner.build_spec({ tree = tree }, discovery)
+            end)
+
+            assert.is_not_nil(spec)
+            assert.are.equal(norm .. "::TestA", spec.context.id_map["900:TestA"])
         end)
     end)
 
