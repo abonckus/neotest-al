@@ -92,13 +92,17 @@ end
 ---@return string  app id, or "" if not found
 local function read_app_id(path)
     local found = vim.fs.find("app.json", {
-        path   = vim.fs.dirname(vim.fs.normalize(path)),
+        path = vim.fs.dirname(vim.fs.normalize(path)),
         upward = true,
-        limit  = 1,
+        limit = 1,
     })
-    if not found[1] then return "" end
+    if not found[1] then
+        return ""
+    end
     local f = io.open(found[1], "r")
-    if not f then return "" end
+    if not f then
+        return ""
+    end
     local raw = f:read("*a")
     f:close()
     local ok, data = pcall(vim.json.decode, raw)
@@ -111,55 +115,65 @@ end
 ---@param path string
 ---@return { codeunit_name: string, codeunit_id: integer, tests: table[] }|nil
 function M.get_items(path)
-    if not vim.endswith(path, ".al") then return nil end
+    if not vim.endswith(path, ".al") then
+        return nil
+    end
 
     local f = io.open(path, "r")
-    if not f then return nil end
+    if not f then
+        return nil
+    end
     local content = f:read("*a")
     f:close()
 
     local codeunit_id = tonumber(content:match("[Cc]odeunit%s+(%d+)"))
-    if not codeunit_id then return nil end
+    if not codeunit_id then
+        return nil
+    end
 
     local codeunit_name = content:match('[Cc]odeunit%s+%d+%s+"([^"]+)"')
         or content:match("[Cc]odeunit%s+%d+%s+([%w_%.%-]+)")
 
     local app_id = read_app_id(path)
-    local uri    = vim.uri_from_fname(path)
-    local tests  = {}
+    local uri = vim.uri_from_fname(path)
+    local tests = {}
 
     local ok, parsed = pcall(function()
         local parser = vim.treesitter.get_string_parser(content, "al")
-        local root   = parser:parse()[1]:root()
-        local query  = vim.treesitter.query.parse("al", QUERY)
+        local root = parser:parse()[1]:root()
+        local query = vim.treesitter.query.parse("al", QUERY)
 
         local name_id, def_id
         for id, name in ipairs(query.captures) do
-            if name == "test.name" then name_id = id end
-            if name == "test.definition" then def_id = id end
+            if name == "test.name" then
+                name_id = id
+            end
+            if name == "test.definition" then
+                def_id = id
+            end
         end
 
         local seen = {}
         for _, match in query:iter_matches(root, content, 0, -1, { all = true }) do
             local name_nodes = match[name_id]
-            local def_nodes  = match[def_id]
+            local def_nodes = match[def_id]
             if name_nodes and def_nodes then
                 local name_node = type(name_nodes) == "table" and name_nodes[1] or name_nodes
-                local def_node  = type(def_nodes)  == "table" and def_nodes[1]  or def_nodes
-                local sr = def_node:range()  -- only need start row to deduplicate
+                local def_node = type(def_nodes) == "table" and def_nodes[1] or def_nodes
+                local sr = def_node:range() -- only need start row to deduplicate
                 if not seen[sr] then
                     seen[sr] = true
                     local nsr, nsc, ner, nec = name_node:range()
                     local test_name = vim.treesitter.get_node_text(name_node, content)
                     table.insert(tests, {
-                        name       = test_name,
-                        appId      = app_id,
+                        name = test_name,
+                        appId = app_id,
                         codeunitId = codeunit_id,
-                        scope      = 2,
-                        location   = {
-                            source  = uri,
-                            range   = {
-                                start   = { line = nsr, character = nsc },
+                        scope = 2,
+                        location = {
+                            source = uri,
+                            range = {
+                                start = { line = nsr, character = nsc },
                                 ["end"] = { line = ner, character = nec },
                             },
                         },
@@ -175,8 +189,8 @@ function M.get_items(path)
 
     return {
         codeunit_name = codeunit_name,
-        codeunit_id   = codeunit_id,
-        tests         = tests,
+        codeunit_id = codeunit_id,
+        tests = tests,
     }
 end
 

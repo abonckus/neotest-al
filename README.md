@@ -70,8 +70,17 @@ require("neotest-al")({
 
 | Module | Description |
 |--------|-------------|
-| `neotest-al.runner.lsp` | Built-in runner. Executes tests via the `al/runTests` LSP request. Reads launch configuration from `.vscode/launch.json` (prompts with `vim.ui.select` when multiple configs exist). Polls `al/hasProjectClosureLoadedRequest` before running, tracks dirty state to skip unnecessary publishes, and handles auth failures (401), compiler errors, and build diagnostics. Writes colored output with ANSI codes. |
+| `neotest-al.runner.lsp` | Built-in runner. Executes tests via the `al/runTests` LSP request. Works with any discovery module. Reads launch configuration from `.vscode/launch.json` (prompts with `vim.ui.select` when multiple configs exist). Polls `al/hasProjectClosureLoadedRequest` before running, tracks dirty state to skip unnecessary publishes, and handles auth failures (401), compiler errors, and build diagnostics. Writes colored output with ANSI codes. |
 | Custom | Any table implementing the `Runner` interface (see below). |
+
+## Compatibility
+
+| Discovery | Runner | Notes |
+|-----------|--------|-------|
+| `neotest-al.discovery.lsp` | `neotest-al.runner.lsp` | Recommended. Tests discovered and run via AL language server. |
+| `neotest-al.discovery.treesitter` | `neotest-al.runner.lsp` | Discovery is offline; test execution still requires an active `al_ls` client and the AL treesitter grammar for accurate test positions. |
+| `neotest-al.discovery.lsp` | Custom | Custom runner receives LSP-sourced test metadata. |
+| `neotest-al.discovery.treesitter` | Custom | Custom runner receives treesitter-sourced test metadata. |
 
 ## Writing a Custom Runner
 

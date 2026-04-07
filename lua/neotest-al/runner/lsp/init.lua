@@ -14,10 +14,14 @@ local IS_WINDOWS = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
 ---@return vim.lsp.Client|nil
 local function find_al_client(path)
     local np = vim.fs.normalize(path)
-    if IS_WINDOWS then np = np:lower() end
+    if IS_WINDOWS then
+        np = np:lower()
+    end
     for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
         local root = vim.fs.normalize(client.root_dir or "")
-        if IS_WINDOWS then root = root:lower() end
+        if IS_WINDOWS then
+            root = root:lower()
+        end
         if vim.startswith(np, root .. "/") or np == root then
             return client
         end
@@ -32,8 +36,8 @@ end
 ---@param discovery neotest-al.Discovery
 ---@return table[], table<string, string>
 local function collect_items(tree, discovery)
-    local items      = {}
-    local id_map     = {}
+    local items = {}
+    local id_map = {}
     local file_cache = {} -- path -> file_data|false
 
     local function traverse(node)
