@@ -138,7 +138,7 @@ function M.get_items(path)
     local uri = vim.uri_from_fname(path)
     local tests = {}
 
-    local ok, parsed = pcall(function()
+    local ok = pcall(function()
         local parser = vim.treesitter.get_string_parser(content, "al")
         local root = parser:parse()[1]:root()
         local query = vim.treesitter.query.parse("al", QUERY)
