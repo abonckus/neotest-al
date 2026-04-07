@@ -194,8 +194,22 @@ end
 ---@return vim.lsp.Client|nil
 local function find_client(path)
     local np = norm(path)
-    for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
+    local clients = vim.lsp.get_clients({ name = "al_ls" })
+    vim.notify(
+        ("neotest-al find_client: path=%s clients=%d"):format(np, #clients),
+        vim.log.levels.DEBUG,
+        { title = "neotest-al" }
+    )
+    for _, client in ipairs(clients) do
         local root = norm(client.root_dir or "")
+        vim.notify(
+            ("neotest-al find_client:   root=%s match=%s"):format(
+                root,
+                tostring(np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/")
+            ),
+            vim.log.levels.DEBUG,
+            { title = "neotest-al" }
+        )
         if
             #root > 0
             and (np == root or (np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/"))
