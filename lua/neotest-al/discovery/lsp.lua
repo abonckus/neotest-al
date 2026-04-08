@@ -194,13 +194,24 @@ end
 ---@return vim.lsp.Client|nil
 local function find_client(path)
     local np = norm(path)
-    for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
+    local clients = vim.lsp.get_clients({ name = "al_ls" })
+    for _, client in ipairs(clients) do
         local root = norm(client.root_dir or "")
         if
             #root > 0
             and (np == root or (np:sub(1, #root) == root and np:sub(#root + 1, #root + 1) == "/"))
         then
             return client
+        end
+    end
+    -- Multi-project mode: one al_ls client serves all workspace folders.
+    -- The client's root_dir points to the root project (e.g. Cloud), but files
+    -- in dependent projects (e.g. Test) won't prefix-match. If multiproject is
+    -- active, the single client handles all AL files in the workspace.
+    if #clients == 1 then
+        local ok, mp = pcall(require, "al.multiproject")
+        if ok and mp.workspace_root() then
+            return clients[1]
         end
     end
 end
@@ -360,6 +371,11 @@ local function setup_notification_handlers()
             vim.schedule(function()
                 local was_empty = not raw_tree[client_id] or #raw_tree[client_id] == 0
                 local now_populated = #items > 0
+                -- The server sometimes sends a populated updateTests immediately
+                -- followed by an empty one. Don't let the empty one wipe real data.
+                if not now_populated and not was_empty then
+                    return
+                end
                 raw_tree[client_id] = items
                 cache[client_id] = nil -- invalidate lazy per-file cache
                 build_test_file_set(client_id)

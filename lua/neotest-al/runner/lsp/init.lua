@@ -17,13 +17,23 @@ local function find_al_client(path)
     if IS_WINDOWS then
         np = np:lower()
     end
-    for _, client in ipairs(vim.lsp.get_clients({ name = "al_ls" })) do
+    local clients = vim.lsp.get_clients({ name = "al_ls" })
+    for _, client in ipairs(clients) do
         local root = vim.fs.normalize(client.root_dir or "")
         if IS_WINDOWS then
             root = root:lower()
         end
         if vim.startswith(np, root .. "/") or np == root then
             return client
+        end
+    end
+    -- Multi-project mode: one al_ls client serves all workspace folders.
+    -- The client's root_dir points to the root project (e.g. Cloud), but files
+    -- in dependent projects (e.g. Test) won't prefix-match.
+    if #clients == 1 then
+        local ok, mp = pcall(require, "al.multiproject")
+        if ok and mp.workspace_root() then
+            return clients[1]
         end
     end
 end
@@ -120,7 +130,17 @@ function M.new(opts)
             return nil
         end
 
+        -- In multi-project mode, use the actual project folder for the test file
+        -- (e.g. Test), not client.root_dir (which is the root project, e.g. Cloud).
         local workspace_root = vim.fs.normalize(client.root_dir or "")
+        local ok_mp, mp = pcall(require, "al.multiproject")
+        if ok_mp and mp.workspace_root() then
+            local buf = vim.fn.bufnr(position.path)
+            local proj = buf > 0 and mp.project_for_buf(buf)
+            if proj then
+                workspace_root = vim.fs.normalize(proj)
+            end
+        end
 
         -- Ensure project closure is loaded (VSCode always polls this before al/runTests)
         if not wait_for_project_closure(client, workspace_root, opts._closure_max_polls) then

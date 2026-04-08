@@ -1,14 +1,27 @@
 # neotest-al
 
-A [neotest](https://github.com/nvim-neotest/neotest) adapter for the AL language (Microsoft Dynamics 365 Business Central).
+A [neotest](https://github.com/nvim-neotest/neotest) adapter for the AL
+language (Microsoft Dynamics 365 Business Central).
+
+## Features
+
+- Test discovery via the AL Language Server (`al/discoverTests`) or treesitter
+- Test execution via `al/runTests` with `.vscode/launch.json` configuration
+- Dirty-state tracking to skip unnecessary publish steps
+- Auth failure and compiler diagnostic detection
+- ANSI-colored output in the neotest output panel
+- Multi-project workspace support (with [al.nvim] and [code-workspace.nvim])
 
 ## Requirements
 
 - Neovim >= 0.10
 - [neotest](https://github.com/nvim-neotest/neotest)
 - [nvim-nio](https://github.com/nvim-neotest/nvim-nio)
-- [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) with the AL grammar installed
-- For LSP discovery: an active `al_ls` language server (provided by [al.nvim](https://github.com/your-org/al.nvim) or manual `vim.lsp.config` setup)
+- For LSP discovery/runner: an active `al_ls` client (provided by [al.nvim] or
+  manual `vim.lsp.config` setup)
+- For treesitter discovery:
+  [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) with
+  the [AL grammar](https://github.com/SShadowS/tree-sitter-al) installed
 
 ## Installation
 
@@ -28,7 +41,8 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ### Zero config (recommended)
 
-Defaults to LSP discovery and the LSP runner. Tests are discoverable as soon as `al_ls` attaches.
+Defaults to LSP discovery and the LSP runner. Tests appear as soon as `al_ls`
+attaches:
 
 ```lua
 require("neotest").setup({
@@ -44,21 +58,39 @@ require("neotest").setup({
 require("neotest").setup({
     adapters = {
         require("neotest-al")({
-            discovery = require("neotest-al.discovery.lsp"),   -- default
-            runner    = require("my-company.al-runner"),        -- custom runner
+            discovery = require("neotest-al.discovery.lsp"),
+            runner    = require("neotest-al.runner.lsp").new({
+                -- Path to a specific launch.json (default: auto-detected)
+                launch_json_path = "/path/to/.vscode/launch.json",
+                -- Maximum poll iterations before timing out (default: 15000)
+                max_ticks = 15000,
+            }),
         }),
     },
 })
 ```
 
-## Discovery Options
+## Discovery
 
 | Module | Description | Requires |
 |--------|-------------|----------|
-| `neotest-al.discovery.lsp` | Queries `al/discoverTests` from the AL language server. Accurate, always in sync with the server. | `al_ls` attached |
-| `neotest-al.discovery.treesitter` | Parses test files locally via treesitter. Works offline; no LSP required. | AL treesitter grammar |
+| `neotest-al.discovery.lsp` | Queries `al/discoverTests` from the AL Language Server. Accurate, always in sync. | `al_ls` attached |
+| `neotest-al.discovery.treesitter` | Parses test files locally via treesitter. Works offline. | AL treesitter grammar |
 
-To use treesitter discovery:
+### LSP discovery
+
+The default. Cache is populated on the first `discover_positions` call and
+invalidated automatically when the server fires `al/projectsLoadedNotification`
+(after each build/publish cycle). `is_test_file` performs an O(1) lookup with no
+file I/O.
+
+Manual invalidation:
+
+```lua
+require("neotest-al.discovery.lsp").invalidate()
+```
+
+### Treesitter discovery
 
 ```lua
 require("neotest-al")({
@@ -66,53 +98,83 @@ require("neotest-al")({
 })
 ```
 
-## Runner Options
+Detects codeunits with `Subtype = Test` and procedures annotated with `[Test]`.
 
-| Module | Description |
-|--------|-------------|
-| `neotest-al.runner.lsp` | Built-in runner. Executes tests via the `al/runTests` LSP request. Works with any discovery module. Reads launch configuration from `.vscode/launch.json` (prompts with `vim.ui.select` when multiple configs exist). Polls `al/hasProjectClosureLoadedRequest` before running, tracks dirty state to skip unnecessary publishes, and handles auth failures (401), compiler errors, and build diagnostics. Writes colored output with ANSI codes. |
-| Custom | Any table implementing the `Runner` interface (see below). |
+## Runner
+
+### LSP runner (default)
+
+Executes tests via `al/runTests`. Works with any discovery module.
+
+Behavior:
+- Reads `.vscode/launch.json` from the workspace root; prompts with
+  `vim.ui.select` when multiple AL configurations exist
+- Polls `al/hasProjectClosureLoadedRequest` before running (matching VS Code)
+- Tracks dirty state per workspace to skip unnecessary publishes
+- Detects auth failures (HTTP 401) and compiler errors
+- Writes colored output to the neotest output panel
+
+### Custom runner
+
+A runner must implement the following interface:
+
+```lua
+---@class neotest-al.Runner
+---@field name        string
+---@field build_spec  fun(args: neotest.RunArgs, discovery: neotest-al.Discovery): neotest.RunSpec|nil
+---@field results     fun(spec: neotest.RunSpec, result: neotest.StrategyResult, tree: neotest.Tree): table<string, neotest.Result>
+```
+
+`build_spec` receives the active discovery module so the runner can invalidate
+the cache after a build:
+
+```lua
+function M.build_spec(args, discovery)
+    -- ... build your RunSpec ...
+    local client = get_al_client()
+    if client then
+        discovery.invalidate(client.id)
+    end
+    return run_spec
+end
+```
 
 ## Compatibility
 
 | Discovery | Runner | Notes |
 |-----------|--------|-------|
-| `neotest-al.discovery.lsp` | `neotest-al.runner.lsp` | Recommended. Tests discovered and run via AL language server. |
-| `neotest-al.discovery.treesitter` | `neotest-al.runner.lsp` | Discovery is offline; test execution still requires an active `al_ls` client and the AL treesitter grammar for accurate test positions. |
-| `neotest-al.discovery.lsp` | Custom | Custom runner receives LSP-sourced test metadata. |
-| `neotest-al.discovery.treesitter` | Custom | Custom runner receives treesitter-sourced test metadata. |
+| lsp | lsp | Recommended. Both sides use the AL Language Server. |
+| treesitter | lsp | Discovery offline; execution requires `al_ls` and the AL treesitter grammar. |
+| lsp | Custom | Custom runner receives LSP-sourced test metadata. |
+| treesitter | Custom | Custom runner receives treesitter-sourced test metadata. |
 
-## Writing a Custom Runner
+## Multi-project workspaces
 
-A runner must be a table with the following fields:
+When used with [al.nvim]'s multi-project support, neotest-al works
+transparently across all projects in the workspace. Test discovery and
+execution use the single shared `al_ls` client regardless of which project
+folder the test file belongs to.
+
+No additional configuration is needed — neotest-al detects multi-project mode
+automatically when `al.multiproject.workspace_root()` is set.
+
+### Custom discovery interface
+
+A custom discovery module must implement:
 
 ```lua
----@class neotest-al.Runner
----@field name string
----@field build_spec fun(args: neotest.RunArgs, discovery: neotest-al.Discovery): neotest.RunSpec|nil
----@field results   fun(spec: neotest.RunSpec, result: neotest.StrategyResult, tree: neotest.Tree): table<string, neotest.Result>
+---@class neotest-al.Discovery
+---@field name               string
+---@field is_test_file       fun(path: string): boolean
+---@field discover_positions fun(path: string): neotest.Tree|nil
+---@field invalidate         fun(client_id?: integer): nil
+---@field get_items          fun(path: string): {codeunit_name: string, codeunit_id: integer, tests: table[]}|nil
 ```
 
-`build_spec` receives the active `discovery` module as its second argument so the runner can invalidate the test cache after a build:
+## License
 
-```lua
-function M.build_spec(args, discovery)
-    -- ... build your RunSpec ...
+See [LICENSE](LICENSE).
 
-    -- After publishing the app, clear the LSP discovery cache so
-    -- neotest re-discovers tests from the updated server state.
-    local client = get_al_client()
-    if client then
-        discovery.invalidate(client.id)
-    end
-
-    return run_spec
-end
-```
-
-## LSP Discovery Notes
-
-- The cache is populated on the first `discover_positions` call per workspace and reused for all subsequent files in that workspace until invalidated.
-- The cache is invalidated automatically when the AL server fires `al/projectsLoadedNotification` (which happens after a publish/build cycle).
-- You can also invalidate manually: `require("neotest-al.discovery.lsp").invalidate()`.
-- If [al.nvim](https://github.com/your-org/al.nvim) is installed, neotest-al reuses its notification handler infrastructure; otherwise it registers a global `vim.lsp.handlers` entry directly.
+<!-- link references -->
+[al.nvim]: https://github.com/abonckus/al.nvim
+[code-workspace.nvim]: https://github.com/abonckus/code-workspace.nvim
